@@ -240,9 +240,60 @@ explicit request.
   ≈ 150 fps with hardware decoding. Encodes use software decoding.
 - **Encode speed reference** (laptop): UHD grainy film at `slower` ≈ 0.3–0.6
   fps; 1080p ≈ 3 fps. Plan full runs on the desktop.
-- **Intermittent pipe failures** (R80, Windows): vspipe occasionally fails to
-  write to the x265 pipe (`fwrite ... errno 22`), ending the encode early. Encodes
-  are retried up to 3 times (broken output discarded); QA's frame count is the
-  final guard.
+- **Intermittent pipe failures** (Windows): vspipe occasionally fails to write
+  to the x265 pipe (`fwrite() call failed when writing video plane 0, errno: 22`),
+  ending the encode early. Encodes are retried up to 3 times (broken output
+  discarded); QA's frame count is the final guard. See "vspipe → x265 pipe
+  investigation" below for what is known.
+
+## vspipe → x265 pipe investigation (open, 2026-10-02)
+
+Symptom: on 4K 10-bit test clips (BHD, 3840x1600) vspipe aborts with
+`errno: 22` part-way through; x265 then sees EOF, encodes the frames it has and
+exits with code 0, so the only visible sign is a short output.
+
+Established:
+- **Not an R80 regression.** R79 and R80 vspipe write identically: each plane is
+  compacted and written with one `fwrite` (≈12 MB per luma plane at 4K 10-bit).
+- **Not the uv console-script wrapper.** `.venv/Scripts/vspipe.exe` is a
+  trampoline (→ python → `subprocess.run(site-packages/vapoursynth/vspipe.exe)`),
+  but calling the real `vspipe.exe` directly fails too.
+- **The writer fails, not the reader.** In a failing run killed early, x265 was
+  still alive and holding the pipe's read end when vspipe errored (frame 6 at
+  2.7 s). With the read end open a pipe write can only block, not fail with a
+  broken pipe, so vspipe's own `WriteFile` failed. UCRT maps Win32 errors that
+  are not in its table (e.g. `ERROR_NO_SYSTEM_RESOURCES` 1450,
+  `ERROR_WORKING_SET_QUOTA` 1453) to `EINVAL` (22). This differs from the common
+  community case (vapoursynth/vapoursynth#542, Doom9 threads), which is `errno
+  32` caused by a crashing downstream encoder.
+- **x265 hides read failures**: `Y4MInput::populateFrameQueue` returns false on
+  a short `fread` without logging, so a reader-side failure would look the same.
+- **Timing**: x265 pulls the whole lookahead in the first ~2–4 s (≈860 MB for 47
+  4K frames) while allocating its lookahead buffers; all failures happened in
+  that burst window.
+- Large `WriteFile`/`ReadFile` (12–256 MiB) on an anonymous pipe did **not** fail
+  in isolation, nor with 24 GiB of concurrent memory pressure in the reader.
+
+Failure rates observed on the laptop (Core Ultra 7 255H, 31 GiB):
+- in-process loops (4 + 30 + 8 runs): failures only on the first run of each
+  process (2 of 3 loops), later runs 0 failures;
+- fresh processes, first run: 3 of 8 failed (both wrapper and direct vspipe);
+- relay process (1 MiB chunks between vspipe and x265): 0 of 8;
+- cold vs warm file cache (each range read twice, ten ranges): cold 1/10,
+  warm 1/9 — the **cold-cache hypothesis is not supported**.
+
+Not yet explained: why the first run in a process fails more often, and which
+Win32 error vspipe actually receives (the CRT discards it; capturing it needs a
+patched vspipe or an API monitor).
+
+Recommended fix (validated, not yet implemented): drop the pipe. x265's built-in
+VapourSynth reader loads the `.vpy` in-process when the VapourSynth package
+directory (`Path(vapoursynth.__file__).parent`) is prepended to `PATH` for the
+x265 child process; it loaded R80's `vsscript.dll`, imported `videocook`
+filters and used 12 parallel frame requests on the BHD script. To do: switch
+`runner._encode_video` and `trial._encode_once` to `x265 --input <vpy>` (test
+clips via `--seek`/`--frames`; note vspipe's `-s/-e` are inclusive), keep the
+retry and QA frame check, and confirm identical frame counts and output on 4K.
+Scripts used for the experiments were kept out of the repo (scratch/).
 - **Metrics on HDR**: SSIMULACRA2 is computed on tone-mapped SDR previews of
   both sides — comparable within a job, not across SDR/HDR titles.
