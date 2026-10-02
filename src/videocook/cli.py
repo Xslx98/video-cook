@@ -15,7 +15,11 @@ def _cmd_bootstrap(args: argparse.Namespace) -> int:
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from videocook import bootstrap
 
+    from videocook import fsutil
+
     problems = bootstrap.verify()
+    if not fsutil.long_paths_enabled():
+        problems.append("Windows LongPathsEnabled is 0: paths over 260 chars will break external tools")
     for p in problems:
         print(f"PROBLEM: {p}")
     print("OK" if not problems else f"{len(problems)} problem(s)")
