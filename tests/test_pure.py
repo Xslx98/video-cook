@@ -94,7 +94,8 @@ def test_assess_synthetic_scan():
     }
     res = sampling.assess(ScanResult(24.0, n, 1920, 1080, data), budget=8)
     assert res["composition"]["dark_flat"]["share"] > 0.4
-    assert 1 <= len(res["picks"]) <= 8
+    assert 1 <= len(res["picks"]) <= 8 + 2  # up to two CAMBI hotspots on top of the budget
+    assert any(p["role"] == "cambi-hotspot" for p in res["picks"])
     assert any(p["bucket"] == "dark_flat" for p in res["picks"])
     shots = {tuple(p["shot"]) for p in res["picks"]}
     assert len(shots) == len(res["picks"])  # at most one frame per shot
