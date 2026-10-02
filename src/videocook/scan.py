@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import vapoursynth as vs
 
-from videocook.vsource import open_source
+from videocook.vsource import open_trimmed
 
 core = vs.core
 
@@ -80,11 +80,9 @@ def build_stats_clip(src: vs.VideoNode, scan_width: int = 960) -> vs.VideoNode:
 
 
 def run_scan(spec: dict, cache_dir: Path, scan_width: int = 960, hw: bool = True,
-             frame_range: tuple[int, int] | None = None, progress: bool = True) -> ScanResult:
+             trim: list | None = None, progress: bool = True) -> ScanResult:
     core.num_threads = max(core.num_threads, 8)
-    src = open_source(spec, cache_dir, hw=hw)
-    if frame_range:
-        src = src[frame_range[0] : frame_range[1]]
+    src = open_trimmed(spec, cache_dir, trim, hw=hw)
     clip = build_stats_clip(src, scan_width)
     n = clip.num_frames
     arr = {k: np.zeros(n, dtype=np.float32) for k in METRICS}
@@ -109,9 +107,9 @@ def run_scan(spec: dict, cache_dir: Path, scan_width: int = 960, hw: bool = True
     return ScanResult(fps, n, src.width, src.height, arr)
 
 
-def detect_crop(spec: dict, cache_dir: Path, samples: int = 40) -> dict:
+def detect_crop(spec: dict, cache_dir: Path, samples: int = 40, trim: list | None = None) -> dict:
     """Black borders: rows/columns that stay near black in every sampled frame."""
-    src = open_source(spec, cache_dir, hw=True)
+    src = open_trimmed(spec, cache_dir, trim, hw=True)
     y = core.resize.Point(src, format=vs.GRAY16)
     n = y.num_frames
     idx = np.linspace(n * 0.05, n * 0.95, samples).astype(int)

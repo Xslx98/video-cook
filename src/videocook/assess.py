@@ -9,7 +9,7 @@ import numpy as np
 
 from videocook import images, sampling
 from videocook.scan import ScanResult, detect_crop, run_scan
-from videocook.vsource import open_source
+from videocook.vsource import open_trimmed
 
 BUCKET_COLOURS = {
     "dark_flat": "#3b4cc0", "dark_noisy": "#7b3294", "bright_gradient": "#f4a582",
@@ -62,14 +62,14 @@ def timeline_png(scan: ScanResult, result: dict, path: Path) -> None:
 
 
 def render_samples(spec: dict, cache_dir: Path, colour: dict, picks: list[dict], out: Path,
-                   frame_offset: int = 0) -> list[dict]:
-    clip = open_source(spec, cache_dir, hw=False)
+                   trim: list | None = None) -> list[dict]:
+    clip = open_trimmed(spec, cache_dir, trim, hw=False)
     rgb = images.to_rgb(clip, colour)
     cw, ch = (960, 540) if clip.width > 2000 else (480, 270)
     zoom = 1 if clip.width > 2000 else 2
     tiles = []
     for i, p in enumerate(picks, 1):
-        n = p["frame"] + frame_offset
+        n = p["frame"]
         arr = images.frame_array(rgb, n)
         lum = images.luma_array(clip, n)
         x, y = images.choose_crop(lum, p["bucket"], cw, ch)
@@ -123,21 +123,20 @@ def report_md(probe_md: str | None, result: dict, crop: dict | None) -> str:
 
 
 def run(job_dir: Path, spec: dict, colour: dict, budget: int,
-        frame_range: tuple[int, int] | None = None, rescan: bool = False) -> dict:
-    out = job_dir / "assess"
+        trim: list | None = None, rescan: bool = False, out: Path | None = None) -> dict:
+    out = out or job_dir / "assess"
     out.mkdir(parents=True, exist_ok=True)
     cache = job_dir / "cache"
     npz = out / "scan.npz"
     if npz.exists() and not rescan:
         scan = ScanResult.load(npz)
     else:
-        scan = run_scan(spec, cache, frame_range=frame_range)
+        scan = run_scan(spec, cache, trim=trim)
         scan.save(npz)
     result = sampling.assess(scan, budget)
-    offset = frame_range[0] if frame_range else 0
-    result["frame_offset"] = offset
-    result["picks"] = render_samples(spec, cache, colour, result["picks"], out, offset)
-    crop = detect_crop(spec, cache)
+    result["trim"] = trim or []
+    result["picks"] = render_samples(spec, cache, colour, result["picks"], out, trim)
+    crop = detect_crop(spec, cache, trim=trim)
     result["crop"] = crop
     timeline_png(scan, result, out / "timeline.png")
     (out / "assessment.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

@@ -75,3 +75,12 @@ def resolve_bdmv_items(root: Path, playlist: str) -> list[dict]:
         last = round((it.out_time / bluray.TICKS - start) * fps) - 1
         items.append({"clip": it.clip, "first": first, "last": last})
     return items
+
+
+def open_trimmed(spec: dict, cache_dir: str | Path, trim: list | None = None,
+                 hw: bool = False) -> vs.VideoNode:
+    """Source with the job's --trim segments applied (same numbering as the scripts)."""
+    clip = open_source(spec, cache_dir, hw=hw)
+    if trim:
+        clip = core.std.Splice([clip[a:b] for a, b in trim])
+    return clip

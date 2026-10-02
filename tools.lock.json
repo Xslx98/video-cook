@@ -68,7 +68,7 @@
   "vapoursynth_plugins": [
     "lsmas", "ffms2", "bs", "fmtc", "mvsfunc", "vsutil", "havsfunc",
     "neo_f3kdb", "znedi3", "nnedi3", "nnedi3_weights", "eedi2", "eedi3m", "sangnom",
-    "dfttest", "neo_dfttest", "knlm", "bm3dcpu", "zsmooth", "rgvs",
+    "dfttest", "neo_dfttest", "knlm", "nlm_ispc", "bm3dcpu", "zsmooth", "rgvs",
     "tcanny", "akarin", "vivtc", "tdm", "mv", "descale", "placebo", "vszip", "imwri", "cas"
   ]
 }

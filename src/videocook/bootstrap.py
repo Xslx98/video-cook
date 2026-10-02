@@ -87,7 +87,7 @@ def install_plugins() -> None:
 
 REQUIRED_NAMESPACES = [
     "lsmas", "ffms2", "bs", "fmtc", "neo_f3kdb", "znedi3", "nnedi3", "eedi2", "eedi3m",
-    "sangnom", "dfttest", "knlm", "bm3dcpu", "zsmooth", "rgvs", "tcanny", "akarin",
+    "sangnom", "dfttest", "knlm", "nlm_ispc", "bm3dcpu", "zsmooth", "rgvs", "tcanny", "akarin",
     "vivtc", "tdm", "mv", "descale", "placebo", "vszip", "imwri", "misc",
 ]
 
