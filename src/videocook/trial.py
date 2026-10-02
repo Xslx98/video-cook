@@ -23,8 +23,18 @@ from videocook.script import load_outputs, script_path
 from videocook.toolchain import tool
 
 
-def _encode_range(vpy: Path, start: int, end: int, x265_args: list[str], out: Path, log: Path) -> None:
-    """vspipe [start, end] (inclusive) | x265 → out (.hevc)."""
+def _encode_range(vpy: Path, start: int, end: int, x265_args: list[str], out: Path, log: Path,
+                  attempts: int = 3) -> None:
+    """vspipe [start, end] (inclusive) | x265 → out (.hevc), retried on pipe failures."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return _encode_once(vpy, start, end, x265_args, out, log)
+        except RuntimeError:
+            if attempt == attempts:
+                raise
+
+
+def _encode_once(vpy: Path, start: int, end: int, x265_args: list[str], out: Path, log: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8") as lf:
         pipe = subprocess.Popen([str(tool("vspipe")), "-c", "y4m", "-s", str(start), "-e", str(end),

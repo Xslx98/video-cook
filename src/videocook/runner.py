@@ -184,9 +184,21 @@ class UnitRunner:
                                "subtitles.font_dirs (or, with the user's consent, set "
                                "subtitles.allow_missing_fonts = true) and re-run")
 
-    def step_video(self) -> None:
+    def step_video(self, attempts: int = 3) -> None:
+        """Encode, retrying when the vspipe→x265 pipe breaks (seen intermittently on
+        Windows with R80: vspipe fwrite errno 22). A broken attempt is discarded."""
         if not self.encode:
             return
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._encode_video(attempt)
+            except RuntimeError:
+                (self.work / "video.hevc").unlink(missing_ok=True)
+                if attempt == attempts:
+                    raise
+                self.state.set(self.uid, progress=f"encode attempt {attempt} failed, retrying")
+
+    def _encode_video(self, attempt: int) -> None:
         facts = self.job.stream_facts()
         qp = None
         if self.job.data["chapters"].get("keyframes") and not self.trim \
@@ -196,7 +208,7 @@ class UnitRunner:
         args = encoder.build(self.job.data["video"], facts["colour"], facts["hdr"], self.info["height"],
                              qpfile=str(qp) if qp else None)
         out = self.work / "video.hevc"
-        log = self.logs / f"{self.uid}_x265.log"
+        log = self.logs / f"{self.uid}_x265{'' if attempt == 1 else f'_try{attempt}'}.log"
         with log.open("w", encoding="utf-8") as lf:
             lf.write("x265 " + " ".join(args) + "\n")
             lf.flush()

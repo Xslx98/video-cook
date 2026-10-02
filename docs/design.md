@@ -240,3 +240,9 @@ explicit request.
   ≈ 150 fps with hardware decoding. Encodes use software decoding.
 - **Encode speed reference** (laptop): UHD grainy film at `slower` ≈ 0.3–0.6
   fps; 1080p ≈ 3 fps. Plan full runs on the desktop.
+- **Intermittent pipe failures** (R80, Windows): vspipe occasionally fails to
+  write to the x265 pipe (`fwrite ... errno 22`), ending the encode early. Encodes
+  are retried up to 3 times (broken output discarded); QA's frame count is the
+  final guard.
+- **Metrics on HDR**: SSIMULACRA2 is computed on tone-mapped SDR previews of
+  both sides — comparable within a job, not across SDR/HDR titles.
