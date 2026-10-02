@@ -192,3 +192,29 @@ Lossy-source policy: when the source is already a lossy encode, the report
 warns about generation loss and estimates the size; the default recommendation
 is **video passthrough** (remux, tracks, subs, naming), re-encoding only on
 explicit request.
+
+## Implementation notes (found during acceptance, 2026-10-02)
+
+- **VapourSynth R79 pin**: R80 dropped API 3; neo_f3kdb, KNLMeansCL, MVTools,
+  SangNom, TDeintMod, EEDI2, nnedi3 are API 3 builds.
+- **Track ids**: ffprobe stream indexes and mkvmerge track ids differ (MPEG-PS,
+  BD). The probe pairs them by order within each type (`mkv_id`); track
+  selection always uses `mkv_id`.
+- **Inconsistent BD tracks**: DIY discs can change a track's format between
+  the playlist's clips (e.g. AC-3 5.1 → 2.0); mkvmerge cannot join it. The run
+  stops with a readable error and the user drops/replaces the track.
+- **Fonts**: assfonts aborts the whole subset when any font is missing, so
+  missing fonts block the run. `subtitles.allow_missing_fonts = true` is an
+  explicit, user-approved escape hatch (no fonts are attached then). Multiple
+  ASS files are subset together (`-c`) so each font is attached once.
+- **Test runs (`--trim`)**: audio/subtitles are cut while demuxing (before
+  FLAC conversion — mkvmerge cannot split FLAC); external audio is cut with
+  ffmpeg. Cutting TrueHD at arbitrary points produces decoder errors at the
+  joins, so in trimmed runs the audio-decode QA check is non-blocking.
+  Chapters and chapter keyframes are skipped.
+- **QA** additionally checks the video track's real duration against
+  frames/fps (catches a wrong `--default-duration`).
+- **Scan speed** (laptop, Core Ultra 7 255H): 1080p HEVC ≈ 600 fps, UHD HEVC
+  ≈ 150 fps with hardware decoding. Encodes use software decoding.
+- **Encode speed reference** (laptop): UHD grainy film at `slower` ≈ 0.3–0.6
+  fps; 1080p ≈ 3 fps. Plan full runs on the desktop.

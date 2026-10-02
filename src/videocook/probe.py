@@ -14,7 +14,8 @@ from pathlib import Path
 from videocook import bluray, fsutil
 from videocook.toolchain import run, run_json
 
-VIDEO_EXTS = {".mkv", ".mp4", ".m2ts", ".ts", ".mts", ".m4v", ".mov", ".avi", ".vob", ".webm"}
+VIDEO_EXTS = {".mkv", ".mp4", ".m2ts", ".ts", ".mts", ".m4v", ".mov", ".avi", ".vob", ".webm",
+              ".mpg", ".mpeg", ".m2v"}
 SIDECAR_EXTS = {".mka", ".ass", ".ssa", ".srt", ".sup", ".idx", ".sub", ".vtt", ".flac", ".ac3",
                 ".dts", ".thd", ".eac3", ".m4a", ".opus", ".aac", ".xml", ".txt"}
 LOSSLESS_AUDIO = {"pcm_bluray", "pcm_s16le", "pcm_s24le", "pcm_dvd", "flac", "alac", "truehd", "mlp"}
@@ -133,12 +134,13 @@ def interlace_check(path: Path, frames: int = 600, start: float = 120) -> dict:
               check=False)
     text = res.stderr
     out: dict = {}
-    m = re.search(r"Multi frame detection: TFF:\s*(\d+) BFF:\s*(\d+) Progressive:\s*(\d+) Undetermined:\s*(\d+)", text)
+    # the filter graph may be re-initialised; the last report is the real one
+    m = re.findall(r"Multi frame detection: TFF:\s*(\d+) BFF:\s*(\d+) Progressive:\s*(\d+) Undetermined:\s*(\d+)", text)
     if m:
-        out.update(dict(zip(("tff", "bff", "progressive", "undetermined"), map(int, m.groups()))))
-    m = re.search(r"Repeated Fields: Neither:\s*(\d+) Top:\s*(\d+) Bottom:\s*(\d+)", text)
+        out.update(dict(zip(("tff", "bff", "progressive", "undetermined"), map(int, m[-1]))))
+    m = re.findall(r"Repeated Fields: Neither:\s*(\d+) Top:\s*(\d+) Bottom:\s*(\d+)", text)
     if m:
-        neither, top, bottom = map(int, m.groups())
+        neither, top, bottom = map(int, m[-1])
         out["repeated_fields_ratio"] = round((top + bottom) / max(1, neither + top + bottom), 3)
     if out and sum(out.get(k, 0) for k in ("tff", "bff", "progressive", "undetermined")) == 0:
         out["verdict"] = "unknown (no frames analysed)"
@@ -149,10 +151,10 @@ def interlace_check(path: Path, frames: int = 600, start: float = 120) -> dict:
         ratio = inter / max(1, total)
         out["interlaced_ratio"] = round(ratio, 3)
         rep = out.get("repeated_fields_ratio", 0)
-        if ratio < 0.05:
-            out["verdict"] = "progressive"
-        elif 0.15 <= rep <= 0.3:
+        if 0.15 <= rep <= 0.45:
             out["verdict"] = "telecined (likely 3:2 pulldown, IVTC candidate)"
+        elif ratio < 0.05:
+            out["verdict"] = "progressive"
         elif ratio > 0.8:
             out["verdict"] = "interlaced"
         else:
@@ -374,9 +376,23 @@ def probe_file(path: Path, kind: str = "file", deep: bool = True) -> dict:
     }
     if result["hdr"]["hdr10"]:
         result["hdr"]["static"] = mastering_metadata(path)
+    if kind != "bdmv":
+        attach_mkv_ids(result, run_json("mkvmerge", "-J", path).get("tracks", []))
     if deep and needs_interlace_check(video, result):
         result["interlace"] = interlace_check(path, start=min(120.0, result["duration"] / 4))
     return result
+
+
+def attach_mkv_ids(result: dict, mk_tracks: list[dict]) -> None:
+    """mkvmerge track ids differ from ffprobe stream indexes (MPEG-PS, BD); pair them
+    by order within each type and store as `mkv_id` (used for track selection)."""
+    for kind, key in (("audio", "audio"), ("subtitles", "subtitles")):
+        ids = [t["id"] for t in mk_tracks if t["type"] == kind]
+        for item, mkv_id in zip(result.get(key, []), ids):
+            item["mkv_id"] = mkv_id
+            lang = next((t["properties"].get("language") for t in mk_tracks if t["id"] == mkv_id), None)
+            if not item.get("language") and lang and lang != "und":
+                item["language"] = lang
 
 
 def probe_bdmv(path: Path) -> dict:
@@ -405,12 +421,8 @@ def probe_bdmv(path: Path) -> dict:
                    "channels": t["properties"].get("audio_channels"),
                    "core_of": t["properties"].get("multiplexed_tracks")}
                   for t in mk.get("tracks", [])]
-        # mkvmerge reads languages from the playlist; ids follow the ffprobe order.
-        by_id = {t["id"]: t for t in tracks}
-        for item in (detail or {}).get("audio", []) + (detail or {}).get("subtitles", []):
-            t = by_id.get(item["index"])
-            if t and not item.get("language"):
-                item["language"] = t["language"]
+        # mkvmerge reads languages from the playlist
+        attach_mkv_ids(detail, mk.get("tracks", []))
         if any(t["type"] == "video" for t in tracks[1:]) and detail:
             detail["hdr"]["dolby_vision_el_track"] = True
     return {

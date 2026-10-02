@@ -123,7 +123,11 @@ def _cmd_fastcheck(args: argparse.Namespace) -> int:
     from videocook import fasttrack
     from videocook.job import Job
 
-    r = fasttrack.check(Job.resolve(args.job))
+    job = Job.resolve(args.job)
+    if not job.data["job"].get("derived_from"):
+        print("this job was not derived from another job (use `vcook new --from`)")
+        return 2
+    r = fasttrack.check(job)
     print("fast track OK" if r["fast_track"] else "leave fast track:")
     for m in r["mismatches"]:
         print(f"  - {m}")

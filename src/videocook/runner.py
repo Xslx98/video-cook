@@ -105,6 +105,8 @@ def vpy_info(vpy: Path) -> dict:
     res = run("vspipe", "--info", vpy, "-", check=False)
     out = {}
     for line in res.stdout.splitlines():
+        if not line.strip() and out:
+            break  # only output 0 (output 1 is the untouched source)
         if ":" in line:
             k, v = line.split(":", 1)
             out[k.strip().lower()] = v.strip()
@@ -144,7 +146,7 @@ class UnitRunner:
     def run(self) -> None:
         try:
             self.info = vpy_info(self.vpy)
-            self.state.set(self.uid, frames=self.info["frames"], error="")
+            self.state.set(self.uid, frames=self.info["frames"], error="", status="running")
             self.do("demux", self.step_demux)
             self.do("audio", self.step_audio)
             self.do("fonts", self.step_fonts)
@@ -157,8 +159,11 @@ class UnitRunner:
             raise
 
     # -- steps ----------------------------------------------------------------------
+    def source_fps(self) -> float:
+        return float(self.job.stream_facts()["fps"])
+
     def step_demux(self) -> None:
-        tracks.demux(self.unit, self.plan(), self.work)
+        tracks.demux(self.unit, self.plan(), self.work, self.trim, self.source_fps())
 
     def step_audio(self) -> None:
         entries = tracks.convert_audio(self.plan(), self.work / "tracks.mka", self.work, self.unit)
@@ -173,9 +178,11 @@ class UnitRunner:
             result = tracks.subset_fonts(ass, dirs, self.work / "fonts", self.job.sub("cache", "fontdb"))
             (self.logs / f"{self.uid}_assfonts.log").write_text(result.pop("log"), encoding="utf-8")
         (self.work / "fonts.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-        if not result["ok"]:
-            raise RuntimeError(f"fonts missing for subtitles: {result['missing']} — "
-                               "add a font folder to subtitles.font_dirs and re-run")
+        if not result["ok"] and not self.job.data["subtitles"].get("allow_missing_fonts"):
+            raise RuntimeError(f"fonts missing for subtitles: {result['missing']} "
+                               f"{result.get('missing_glyphs', [])} — add a font folder to "
+                               "subtitles.font_dirs (or, with the user's consent, set "
+                               "subtitles.allow_missing_fonts = true) and re-run")
 
     def step_video(self) -> None:
         if not self.encode:
@@ -257,9 +264,13 @@ class UnitRunner:
                 mka_audio.append(str(e["mka_id"]))
                 mka_meta += meta(str(e["mka_id"]), e)
                 order.append(f"{mka_input}:{e['mka_id']}")
-        for e in plan["ext_audio"]:
+        for k, e in enumerate(plan["ext_audio"]):
             if e["action"] != "drop":
-                inputs.append([*meta("-1", e), e["file"]])
+                f = e["file"]
+                if self.trim:
+                    f = str(tracks.trim_external_audio(Path(f), self.trim, self.source_fps(),
+                                                       self.work / f"ext_audio_{k}_trim.flac"))
+                inputs.append([*meta("-1", e), f])
                 order.append(f"{len(inputs) - 1}:0")
         n_audio_kept = len([t for t in plan["audio"] if t["action"] != "drop" and "index" in t])
         for k, s in enumerate([t for t in plan["subs"] if t["action"] != "drop" and "index" in t]):
@@ -270,9 +281,12 @@ class UnitRunner:
             mka_subs.append(str(mka_id))
             mka_meta += meta(str(mka_id), s)
             order.append(f"{mka_input}:{mka_id}")
-        for s in plan["ext_subs"]:
+        for k, s in enumerate(plan["ext_subs"]):
             if s["action"] != "drop":
-                inputs.append([*meta("-1", s), "--sub-charset", "-1:UTF-8", s["file"]])
+                f = s["file"]
+                if self.trim:
+                    f = str(self._trim_text_sub(Path(f), k))
+                inputs.append([*meta("-1", s), "--sub-charset", "-1:UTF-8", f])
                 order.append(f"{len(inputs) - 1}:0")
         if mka_input is not None:
             sel = (["--audio-tracks", ",".join(mka_audio)] if mka_audio else ["-A"]) + \
@@ -285,18 +299,20 @@ class UnitRunner:
         res = run("mkvmerge", *args, check=False)
         if res.returncode >= 2:
             raise RuntimeError(f"mkvmerge (audio/subs) failed: {res.stdout[-2000:]}")
-        if not self.trim:
-            return out
-        fps = self.info["fps"] if not self.job.data["video"].get("filters", {}).get("field") else None
-        if fps is None:
-            raise RuntimeError("--trim with field processing is not supported")
-        src_fps = fps
-        parts = ",+".join(f"{_ts(a / src_fps)}-{_ts(b / src_fps)}" for a, b in self.trim)
-        trimmed = self.work / "av_trim.mka"
-        res = run("mkvmerge", "-o", trimmed, "--split", f"parts:{parts}", out, check=False)
-        if res.returncode >= 2:
-            raise RuntimeError(f"mkvmerge trim failed: {res.stdout[-2000:]}")
-        return trimmed
+        return out
+
+    def _trim_text_sub(self, sub: Path, k: int) -> Path:
+        """Trim an external text subtitle for test runs (mkvmerge can split text tracks)."""
+        out = self.work / f"ext_sub_{k}_trim.mks"
+        if not out.exists():
+            part = self.work / f"ext_sub_{k}_trim.part.mks"
+            res = run("mkvmerge", "-o", part, "--split", tracks.split_parts(self.trim, self.source_fps()),
+                      "--sub-charset", "0:UTF-8", sub, check=False)
+            if res.returncode >= 2:
+                raise RuntimeError(f"trimming subtitle {sub.name} failed: {res.stdout[-1000:]}")
+            tracks._single_output(part)
+            os.replace(part, out)
+        return out
 
     def output_path(self) -> Path:
         rel = naming.relative_path(self.job, self.unit, self.info["height"], self.info["width"])
@@ -345,7 +361,7 @@ class UnitRunner:
         if xml.exists():
             chapters = xml.read_text(encoding="utf-8").count("<ChapterAtom>")
         expect = {"frames": self.info["frames"], "fps": self.info["fps"], "audio": n_audio, "subs": n_subs,
-                  "chapters": chapters, "encoded": self.encode, "hdr10": facts["hdr"].get("hdr10"),
+                  "chapters": chapters, "encoded": self.encode, "trimmed": bool(self.trim), "hdr10": facts["hdr"].get("hdr10"),
                   "primaries": facts["colour"].get("primaries") if self.encode else None,
                   "transfer": facts["colour"].get("transfer") if self.encode else None,
                   "matrix": facts["colour"].get("matrix") if self.encode else None}
@@ -366,12 +382,6 @@ class UnitRunner:
         if not report["passed"]:
             bad = [c["check"] for c in report["checks"] if not c["ok"] and c["blocking"]]
             raise RuntimeError(f"QA failed: {bad}")
-
-
-def _ts(seconds: float) -> str:
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
 
 
 # --- job level ------------------------------------------------------------------------

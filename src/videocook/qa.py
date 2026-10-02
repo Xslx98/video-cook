@@ -19,9 +19,9 @@ def crc32(path: Path) -> str:
     return f"{crc & 0xFFFFFFFF:08X}"
 
 
-def full_decode(path: Path) -> list[str]:
+def full_decode(path: Path, streams: str) -> list[str]:
     res = run("ffmpeg", "-hide_banner", "-nostats", "-v", "error", "-i", path,
-              "-map", "0:v", "-map", "0:a?", "-f", "null", "-", check=False)
+              "-map", streams, "-f", "null", "-", check=False)
     return [ln for ln in res.stderr.splitlines() if ln.strip()]
 
 
@@ -39,8 +39,14 @@ def check(unit_id: str, mkv: Path, expect: dict, out_dir: Path) -> dict:
     def add(name: str, ok: bool, detail: str, blocking: bool = True) -> None:
         results.append({"check": name, "ok": ok, "detail": detail, "blocking": blocking})
 
-    errors = full_decode(mkv)
-    add("full decode", not errors, f"{len(errors)} error line(s)" + (f": {errors[:3]}" if errors else ""))
+    errors = full_decode(mkv, "0:v")
+    add("video decode", not errors, f"{len(errors)} error line(s)" + (f": {errors[:3]}" if errors else ""))
+    errors = full_decode(mkv, "0:a?")
+    trimmed = bool(expect.get("trimmed"))
+    add("audio decode", not errors,
+        f"{len(errors)} error line(s)" + (f": {errors[:2]}" if errors else "")
+        + ("; test run: joins of trimmed segments may cut audio frames" if trimmed and errors else ""),
+        blocking=not trimmed)
 
     frames = count_frames(mkv)
     add("frame count", frames == expect["frames"], f"{frames} in file, {expect['frames']} expected")
@@ -50,6 +56,12 @@ def check(unit_id: str, mkv: Path, expect: dict, out_dir: Path) -> dict:
     v = next(s for s in info["streams"] if s["codec_type"] == "video")
     frame = 1 / expect["fps"]
     vdur = frames / expect["fps"]
+    actual = v.get("tags", {}).get("DURATION") or v.get("duration")
+    if actual:
+        vreal = _dur(actual)
+        add("video timing", abs(vreal - vdur) < 2 * frame,
+            f"video track lasts {vreal:.3f}s, {vdur:.3f}s expected from {frames} frames @ {expect['fps']:.3f}")
+        vdur = vreal
     drift = []
     for s in info["streams"]:
         if s["codec_type"] != "audio":

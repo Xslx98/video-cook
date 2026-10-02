@@ -12,6 +12,11 @@
 - mkvmerge reads `.mpls` directly (concatenation, seamless branching, chapters,
   languages); VapourSynth opens the m2ts clips trimmed to the playlist's in/out
   points, so no full demux of the video is ever written to disk.
+- DIY/remastered discs may change a track's format between clips; the run then
+  stops with "track N changes format between the playlist's clips" — tell the
+  user, drop or replace that track.
+- UHD grainy film is expensive: Black Hawk Down at CRF 19 live_action ran at
+  ~50–60 Mbps. Discuss the tier with real numbers from the trial.
 - TrueHD tracks carry an AC-3 compatibility core in the same PID: the plan
   marks it `drop (AC-3 compatibility core...)`.
 - ISO: `vcook new` mounts it read-only with Windows' built-in mounter (or ask

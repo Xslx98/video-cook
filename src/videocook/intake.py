@@ -27,7 +27,9 @@ def default_audio_plan(audio: list[dict]) -> list[dict]:
     for a in audio:
         action = {"FLAC": "flac", "passthrough (object audio)": "copy",
                   "passthrough (lossy)": "copy"}.get(a["default_plan"], "drop")
-        plan.append({"index": a["index"], "action": action, "language": a.get("language") or "und",
+        if action == "flac" and a["codec"] == "flac":
+            action = "copy"  # already FLAC
+        plan.append({"index": a["index"], "mkv_id": a.get("mkv_id", a["index"]), "action": action, "language": a.get("language") or "und",
                      "title": "", "default": action != "drop" and first_kept,
                      "codec": a["codec"], "channels": a.get("channels")})
         if action != "drop":
@@ -36,7 +38,7 @@ def default_audio_plan(audio: list[dict]) -> list[dict]:
 
 
 def default_subtitle_plan(subs: list[dict]) -> list[dict]:
-    return [{"index": s["index"], "action": "copy", "language": s.get("language") or "und",
+    return [{"index": s["index"], "mkv_id": s.get("mkv_id", s["index"]), "action": "copy", "language": s.get("language") or "und",
              "title": s.get("title") or "", "default": False, "forced": s.get("forced", False)}
             for s in subs]
 
@@ -44,7 +46,7 @@ def default_subtitle_plan(subs: list[dict]) -> list[dict]:
 def sidecar_plan(sidecars: list[dict], job: Job) -> tuple[list[dict], list[dict], list[str]]:
     """External audio/subtitle files are copied into the job (short paths) and offered."""
     audio, subs, fonts = [], [], []
-    ext_dir = job.sub("work", "external")
+    ext_dir = job.sub("external")  # kept after delivery (work/ is not)
     for sc in sidecars:
         src = Path(sc["path"])
         if sc["ext"] == "fonts-dir":
@@ -53,6 +55,10 @@ def sidecar_plan(sidecars: list[dict], job: Job) -> tuple[list[dict], list[dict]
         local = ext_dir / f"{len(list(ext_dir.iterdir())):02d}_{'.'.join(sc['tags']) or 'main'}{sc['ext']}"
         fsutil.copy(src, local)
         lang, title = guess_language(sc["tags"])
+        if sc["ext"] in (".mka", ".flac", ".m4a", ".opus", ".ac3", ".dts", ".eac3", ".thd"):
+            tags = _first_stream_tags(local)
+            lang = _iso639_2(tags.get("language")) or lang
+            title = tags.get("title") or title
         entry = {"file": str(local), "original": str(src), "language": lang, "title": title,
                  "default": False, "action": "copy"}
         if sc["ext"] in (".ass", ".ssa", ".srt", ".sup", ".vtt", ".idx"):
@@ -60,6 +66,25 @@ def sidecar_plan(sidecars: list[dict], job: Job) -> tuple[list[dict], list[dict]
         else:
             audio.append(entry)
     return audio, subs, fonts
+
+
+def _first_stream_tags(path: Path) -> dict:
+    from videocook.toolchain import run_json
+
+    info = run_json("ffprobe", "-v", "error", "-show_entries", "stream_tags=language,title",
+                    "-of", "json", path)
+    streams = info.get("streams") or [{}]
+    return {k.lower(): v for k, v in streams[0].get("tags", {}).items()}
+
+
+ISO639_1_TO_2 = {"ja": "jpn", "en": "eng", "zh": "chi", "ko": "kor", "fr": "fre", "de": "ger",
+                 "es": "spa", "it": "ita", "ru": "rus"}
+
+
+def _iso639_2(code: str | None) -> str | None:
+    if not code or code == "und":
+        return None
+    return ISO639_1_TO_2.get(code, code)
 
 
 LANG_TAGS = {
@@ -84,6 +109,7 @@ def guess_language(tags: list[str]) -> tuple[str, str]:
 def new_job(source: Path, name: str | None = None, trim: list[list[int]] | None = None) -> Job:
     from videocook import units
 
+    source = Path(source).resolve()
     original = source
     if source.is_file() and source.suffix.lower() == ".iso":
         source = units.mount_iso(source)

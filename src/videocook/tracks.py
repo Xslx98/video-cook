@@ -23,21 +23,67 @@ def unit_media(unit: dict) -> Path:
     return Path(src["path"])
 
 
-def demux(unit: dict, plan: dict, work: Path) -> Path:
-    """Copy the planned audio/subtitle tracks (no video) into work/tracks.mka."""
+def split_parts(trim: list, fps: float) -> str:
+    """mkvmerge `--split parts:` spec that keeps and joins the trim segments."""
+    def ts(sec: float) -> str:
+        h, rem = divmod(sec, 3600)
+        m, s = divmod(rem, 60)
+        return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
+
+    return "parts:" + ",+".join(f"{ts(a / fps)}-{ts(b / fps)}" for a, b in trim)
+
+
+def _single_output(base: Path) -> None:
+    """mkvmerge numbers split output files (name-001.mka); normalise to `base`."""
+    if base.exists():
+        return
+    hits = sorted(base.parent.glob(f"{base.stem}-*{base.suffix}"))
+    if len(hits) != 1:
+        raise RuntimeError(f"expected one split output for {base.name}, found {[h.name for h in hits]}")
+    os.replace(hits[0], base)
+
+
+def demux(unit: dict, plan: dict, work: Path, trim: list | None = None, fps: float | None = None) -> Path:
+    """Copy the planned audio/subtitle tracks (no video) into work/tracks.mka.
+
+    With `trim`, only the trimmed segments are kept (joined), using the source frame rate.
+    Splitting happens here, before any FLAC conversion (mkvmerge cannot split FLAC).
+    """
     out = work / "tracks.mka"
     if out.exists():
         return out
-    a_ids = [str(t["index"]) for t in plan["audio"] if t["action"] != "drop" and "index" in t]
-    s_ids = [str(t["index"]) for t in plan["subs"] if t["action"] != "drop" and "index" in t]
-    args = ["-o", str(out) + ".part", "-D", "--no-attachments"]
+    a_ids = [str(t.get("mkv_id", t["index"])) for t in plan["audio"] if t["action"] != "drop" and "index" in t]
+    s_ids = [str(t.get("mkv_id", t["index"])) for t in plan["subs"] if t["action"] != "drop" and "index" in t]
+    part = work / "tracks.part.mka"
+    args = ["-o", str(part), "-D", "--no-attachments"]
     args += ["--audio-tracks", ",".join(a_ids)] if a_ids else ["-A"]
     args += ["--subtitle-tracks", ",".join(s_ids)] if s_ids else ["-S"]
+    if trim:
+        args += ["--split", split_parts(trim, fps)]
     args.append(str(unit_media(unit)))
     res = run("mkvmerge", *args, check=False)
     if res.returncode >= 2:  # 1 = warnings
+        m = re.search(r"The track number (\d+) from the file .*? cannot be appended.*?: (.*)", res.stdout)
+        if m:
+            raise RuntimeError(f"track {m.group(1)} changes format between the playlist's clips "
+                               f"({m.group(2).strip()}); it cannot be joined — drop it or pick another track")
         raise RuntimeError(f"mkvmerge demux failed: {res.stdout[-2000:]}")
-    os.replace(str(out) + ".part", out)
+    _single_output(part)
+    os.replace(part, out)
+    return out
+
+
+def trim_external_audio(src: Path, trim: list, fps: float, out: Path) -> Path:
+    """Cut and join trim segments of an external audio file (re-encoded to FLAC; test runs only)."""
+    if out.exists():
+        return out
+    chains = "".join(f"[0:a]atrim=start={a / fps}:end={b / fps},asetpts=PTS-STARTPTS[a{i}];"
+                     for i, (a, b) in enumerate(trim))
+    joined = "".join(f"[a{i}]" for i in range(len(trim))) + f"concat=n={len(trim)}:v=0:a=1[out]"
+    res = run("ffmpeg", "-hide_banner", "-nostats", "-y", "-i", src, "-filter_complex", chains + joined,
+              "-map", "[out]", "-c:a", "flac", out, check=False)
+    if res.returncode != 0:
+        raise RuntimeError(f"trimming external audio failed: {res.stderr[-1000:]}")
     return out
 
 
@@ -110,17 +156,24 @@ def system_font_dirs() -> list[str]:
 
 def subset_fonts(ass_files: list[Path], font_dirs: list[str], out_dir: Path, db_dir: Path) -> dict:
     """assfonts subset; returns {"fonts": [paths], "missing": [...], "log": str}."""
+    import shutil
+
+    shutil.rmtree(out_dir, ignore_errors=True)  # assfonts never overwrites (adds _1, _2 copies)
     out_dir.mkdir(parents=True, exist_ok=True)
     db_dir.mkdir(parents=True, exist_ok=True)
     dirs = [*font_dirs, *system_font_dirs()]
     run("assfonts", "-f", *dirs, "-d", db_dir, "-b", check=False)
-    res = run("assfonts", "-f", *dirs, "-d", db_dir, "-o", out_dir, "-s", "-v", "2",
+    # -c: one combined subset per font across all subtitle files (sc/tc share fonts)
+    combine = ["-c"] if len(ass_files) > 1 else []
+    res = run("assfonts", "-f", *dirs, "-d", db_dir, "-o", out_dir, "-s", *combine, "-v", "2",
               "-i", *map(str, ass_files), check=False)
     log = res.stdout + res.stderr
-    missing = sorted(set(re.findall(r"[Mm]issing[^\"\n]*\"([^\"]+)\"", log)))
-    missing += sorted(set(re.findall(r"\[WARN\][^\n]*(?:not found|Missing)[^\n]*", log)))
-    fonts = sorted(str(p) for p in out_dir.iterdir() if p.suffix.lower() in (".ttf", ".otf", ".ttc"))
-    return {"fonts": fonts, "missing": missing, "log": log, "ok": res.returncode == 0 and not missing}
+    missing = sorted(set(re.findall(r'Missing the font: "([^"]+)"', log)))
+    missing_glyphs = sorted(set(re.findall(r"\[WARN\][^\n]*(?:glyph|codepoint)[^\n]*", log, re.I)))
+    warnings = sorted(set(re.findall(r"\[WARN\] (Style [^\n]*not found[^\n]*)", log)))
+    fonts = sorted(str(p) for p in out_dir.rglob("*") if p.suffix.lower() in (".ttf", ".otf", ".ttc"))
+    return {"fonts": fonts, "missing": missing, "missing_glyphs": missing_glyphs, "warnings": warnings,
+            "log": log, "ok": not missing and not missing_glyphs}
 
 
 # --- chapters -----------------------------------------------------------------------

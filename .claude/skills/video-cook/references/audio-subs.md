@@ -35,7 +35,9 @@ audio track; ask). External ASS: `file`, `language`, `title` (e.g.
 External ASS fonts are subset with assfonts and attached to the MKV. Fonts
 are looked up in `subtitles.font_dirs` (folders next to the release are added
 automatically) and the system fonts. **Missing fonts block the run** — ask the
-user for a font pack folder and add it to `font_dirs`. Mention the guides' tip:
+user for a font pack folder and add it to `font_dirs`. Only if the user
+explicitly accepts shipping without them, set `subtitles.allow_missing_fonts =
+true` (assfonts then attaches nothing at all — say so). Mention the guides' tip:
 releases usually ship a font pack; FontLoaderSub/ListAssFonts are the GUI
 equivalents.
 

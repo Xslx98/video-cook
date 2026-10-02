@@ -6,7 +6,6 @@ comparisons. Scripts import videocook, so vspipe must run inside the uv venv.
 
 from __future__ import annotations
 
-import json
 import runpy
 from pathlib import Path
 
@@ -72,9 +71,9 @@ def generate(job: Job) -> list[Path]:
         filters, zones = unit_config(job, unit)
         path.write_text(TEMPLATE.format(
             job=job.data["job"]["name"], unit=unit["id"],
-            source=json.dumps(unit["source"], ensure_ascii=False),
-            cache=str(job.cache), trim=json.dumps(job.data["run"].get("trim") or []),
-            filters=json.dumps(filters), zones=json.dumps(zones)), encoding="utf-8")
+            source=repr(unit["source"]),
+            cache=str(job.cache), trim=repr(job.data["run"].get("trim") or []),
+            filters=repr(filters), zones=repr(zones)), encoding="utf-8")
         paths.append(path)
     return paths
 

@@ -30,7 +30,7 @@ def to_rgb(clip: vs.VideoNode, colour: dict) -> vs.VideoNode:
         hable = "x 0.15 * 0.05 + x * 0.004 + x 0.15 * 0.5 + x * 0.06 + / 0.0667 -"
         w = 12.0
         wscale = (lambda v: ((v * (0.15 * v + 0.05) + 0.004) / (v * (0.15 * v + 0.5) + 0.06)) - 0.0667)(w)
-        tm = core.akarin.Expr(lin, f"x 0 max 2 * X! X@ {hable.replace('x', 'X@')} {wscale} / 0 max 1 min")
+        tm = core.akarin.Expr(lin, f"x 0 max 2 * X! {hable.replace('x', 'X@')} {wscale} / 0 max 1 min")
         return core.resize.Bicubic(tm, format=vs.RGB24, transfer_in_s="linear", transfer_s="709",
                                    dither_type="error_diffusion")
     return core.resize.Bicubic(clip, format=vs.RGB24, matrix_in_s=matrix, range_in_s="limited",
@@ -114,6 +114,7 @@ def contact_sheet(tiles: list[np.ndarray], cols: int = 4, width: int = 480) -> n
         img = Image.fromarray(t)
         h = round(img.height * width / img.width)
         th.append(np.asarray(img.resize((width, h), Image.LANCZOS)))
+    cols = max(1, min(cols, len(th)))
     rows = (len(th) + cols - 1) // cols
     h = max(t.shape[0] for t in th)
     sheet = np.zeros((rows * h, cols * width, 3), dtype=np.uint8)
