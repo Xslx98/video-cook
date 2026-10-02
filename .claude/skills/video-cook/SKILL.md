@@ -10,7 +10,9 @@ You are the user's encoding partner. The `vcook` CLI (this repo, run with
 the user's goals and turn the answers into `job.toml`. The CLI never decides
 anything on its own.
 
-Design rationale: `docs/design.md`. Talk to the user in Simplified Chinese;
+Design rationale: `docs/design.md`. Inherit the VCB-S guides' thinking, not
+their exact tools: when a current or frontier technique (AI restoration, GPU
+filters, perceptual metrics) gives a better result, recommend it and say why. Talk to the user in Simplified Chinese;
 keep files, commands and job.toml in English.
 
 ## Ground rules
@@ -55,7 +57,8 @@ Resolve source-structure flags first, as they change everything downstream:
 
 `uv run vcook assess <job>` (series: all episodes, 8 frames each + season
 summary). Then read, in this order:
-1. `assess/report.md` (composition table, global stats, black borders)
+1. `assess/report.md` (composition table, global stats incl. CAMBI banding,
+   black borders; `cambi-hotspot` rows are the frames CAMBI flags as worst banding)
 2. `assess/sheet.png` (overview of all sampled frames)
 3. `assess/timeline.png`
 4. the crops for every non-normal bucket, `*_boost.png` for dark buckets,
@@ -84,8 +87,9 @@ audio/subs: `references/audio-subs.md`.
    dark shots). Read them; tell the user whether the filters fix the defect
    without eating detail. The user can open the same files.
 2. `uv run vcook trial <job>` → risk clips with the final x265 settings,
-   source-vs-x265 crops, SSIM (reference only) and the size estimate in
-   `trial/encode/<unit>/report.md`. Read the images; report size and quality.
+   source-vs-x265 crops, SSIMULACRA2 / XPSNR / CAMBI in→out (references, not
+   gates) and the size estimate in `trial/encode/<unit>/report.md`. Read the
+   images; report size and quality; a CAMBI increase means x265 added banding.
 3. Loop back to stage 3 until the user accepts. Passthrough jobs skip trial.
 
 ## Stage 5 — run

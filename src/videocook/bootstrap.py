@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 import shutil
 import subprocess
@@ -77,19 +78,23 @@ def install_tools() -> None:
         _install_tool(name, tools[name])
 
 
-def install_plugins() -> None:
-    plugins = lock()["vapoursynth_plugins"]
-    vsrepo = str(venv_scripts() / "vsrepo.exe")
-    subprocess.run([vsrepo, "update"], check=True, capture_output=True)
-    print(f"  vsrepo: installing {len(plugins)} packages")
-    subprocess.run([vsrepo, "install", *plugins], check=True, capture_output=True)
+def install_models() -> None:
+    """AI models used by vs-jetpack (DPIR) go to the shared vsscale cache."""
+    os.environ["VSSCALE_GLOBAL"] = "1"
+    exe = str(venv_scripts() / "vsscale.exe")
+    res = subprocess.run([exe, "onnx", "download", "DPIR", "--latest", "-y", "--global"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    print("  DPIR models:", "ok" if res.returncode == 0 else f"failed ({res.stderr.strip()[-200:]})")
 
 
+# Plugins come from PyPI wheels pinned in uv.lock (see pyproject.toml); this is
+# the set the pipeline relies on. GPU-only namespaces are checked separately.
 REQUIRED_NAMESPACES = [
-    "lsmas", "ffms2", "bs", "fmtc", "neo_f3kdb", "znedi3", "nnedi3", "eedi2", "eedi3m",
-    "sangnom", "dfttest", "knlm", "nlm_ispc", "bm3dcpu", "zsmooth", "rgvs", "tcanny", "akarin",
-    "vivtc", "tdm", "mv", "descale", "placebo", "vszip", "imwri", "misc",
+    "lsmas", "bs", "ffms2", "fmtc", "akarin", "vszip", "zsmooth", "znedi3", "nlm_ispc",
+    "dfttest2_cpu", "bm3dvk", "mvu", "vivtc", "bwdif", "descale", "resize2", "placebo", "ov",
 ]
+GPU_NAMESPACES = {"nvidia": ["nlm_cuda", "bm3dcuda", "trt", "vszipcu"], "opencl": ["vszipcl"]}
 
 
 def verify() -> list[str]:
@@ -106,7 +111,7 @@ def verify() -> list[str]:
     missing = [ns for ns in REQUIRED_NAMESPACES if ns not in loaded]
     if missing:
         problems.append(f"VapourSynth plugins not loaded: {', '.join(missing)}")
-    for module in ("mvsfunc", "havsfunc", "vsutil"):
+    for module in ("vstools", "vsdenoise", "vsdeband", "vsaa", "vsdeinterlace", "vsscale"):
         try:
             __import__(module)
         except Exception as exc:  # noqa: BLE001
@@ -166,8 +171,8 @@ def benchmark() -> dict:
 def main(skip_bench: bool = False) -> int:
     print("[1/4] portable tools")
     install_tools()
-    print("[2/4] VapourSynth plugins")
-    install_plugins()
+    print("[2/4] AI models")
+    install_models()
     print("[3/4] verification")
     problems = verify()
     for p in problems:

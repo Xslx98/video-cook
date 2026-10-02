@@ -4,6 +4,11 @@ This document records the decisions agreed in the initial design interview
 (2026-10-01). It is the reference for *why* the code and the skill behave the
 way they do. Change it when a decision changes.
 
+Guiding principle (2026-10-02): inherit the guides' *thinking* — assess first,
+fix defects in the right order, never trade detail for a fix the viewer won't
+notice — without being bound to their exact versions, tools or plugins. Prefer
+current tools and frontier techniques when results justify them.
+
 Knowledge base: the public VCB-Studio guides (<https://guides.vcb-s.com/>,
 vendored as a submodule under `third_party/vcb-s-guides`). The guides carry no
 license, so this repository never copies their text, images or sample scripts;
@@ -15,8 +20,9 @@ Full VCB-S route, minus OKEGui:
 
 | Role | Tool |
 |---|---|
-| Frame server / filtering | VapourSynth (pinned **R79**, PyPI wheel inside the uv `.venv`) |
-| VS plugins | installed into the venv with `vsrepo` |
+| Frame server / filtering | VapourSynth **R80** (PyPI wheel inside the uv `.venv`) |
+| VS plugins | API 4 plugin wheels from PyPI, pinned in `uv.lock`; filter library vs-jetpack |
+| GPU / AI | CUDA + TensorRT plugins via the `nvidia` extra; OpenCL / Vulkan / OpenVINO otherwise |
 | Encoder | **x265, 10-bit only** (Patman mod, `x86-64-v3` build) |
 | Probing | ffprobe, MediaInfo CLI, mkvmerge `-J` |
 | Audio | ffmpeg (FLAC, Opus) |
@@ -25,13 +31,20 @@ Full VCB-S route, minus OKEGui:
 | HDR metadata | dovi_tool, hdr10plus_tool |
 | Orchestration | `vcook` Python CLI (this repo) — replaces OKEGui |
 
-Why R79 and not latest: R80 removed API 3 plugin support, which breaks
-neo_f3kdb, KNLMeansCL, MVTools, SangNom, TDeintMod, EEDI2 and others the guides
-rely on. R79 still loads them (with a deprecation warning).
+Why R80 + wheels: R80 dropped API 3 plugins and vsrepo still ships API 3
+builds, but the PyPI wheel ecosystem (the one vs-jetpack depends on) has API 4
+builds of almost everything, and uv pins their versions — reproducible across
+machines, unlike vsrepo's "latest". Replacements: f3kdb → vszip.Deband (same
+algorithm), mvsfunc.LimitFilter → vszip.LimitFilter, misc.SCDetect → own
+motion-spike detector, havsfunc QTGMC → vs-jetpack QTGMC, BM3D CPU → BM3D
+CUDA/Vulkan. Verified 2026-10-02 (the first evaluation wrongly concluded R79
+because it only tested vsrepo builds).
 
 ## 2. Installation
 
-`bootstrap.ps1` → `uv sync` → `vcook bootstrap`. Portable binaries pinned in
+`bootstrap.ps1` → `uv sync` (`--extra nvidia` when an NVIDIA GPU is present) →
+`vcook bootstrap` (portable tools + DPIR models into the shared vsscale cache).
+Portable binaries pinned in
 `tools.lock.json` (URL + SHA256) are downloaded into the git-ignored `tools/`
 directory. Nothing is installed system-wide; no admin rights needed. The
 bootstrap ends with a short x265 benchmark that calibrates the default number
@@ -65,10 +78,13 @@ x265 when present. HDR handling is *outside* the guides and is labelled as such.
    bucket, ≤1 frame per shot, representative + extreme frame per bucket,
    dark-flat weighted up. Budget: ~24 frames for a film, 8 per episode for a
    series plus a season summary.
-5. A frame-composition report (bucket shares, timelines) plus full frames and
+5. CAMBI (Netflix banding metric) per frame; shots with CAMBI peaks ≥ 3 at
+   scan resolution are always sampled ("cambi-hotspot"), even when the bucket
+   heuristics put them elsewhere.
+6. A frame-composition report (bucket shares, timelines) plus full frames and
    zoomed crops. Claude reads the images and writes a defect report using the
    guides' chapter 4 taxonomy; the user confirms.
-6. getnative-style native resolution detection is informational only, never a
+7. getnative-style native resolution detection is informational only, never a
    default action.
 
 All parameters live in config and can be overridden per job.
@@ -79,7 +95,9 @@ All parameters live in config and can be overridden per job.
   sampled frames.
 - Encode check: 3–5 ~10 s clips from the riskiest shots encoded with the final
   parameters; source-vs-encode screenshots; size extrapolated to the full run.
-- SSIM on test clips as a reference only. No VMAF.
+- Reference metrics on test clips (never gates): SSIMULACRA2 (mean and 5th
+  percentile), XPSNR, and CAMBI of encoder input vs. output (banding added by
+  x265). Replaced SSIM on 2026-10-02. No VMAF.
 
 ## 8. Audio
 
@@ -195,8 +213,12 @@ explicit request.
 
 ## Implementation notes (found during acceptance, 2026-10-02)
 
-- **VapourSynth R79 pin**: R80 dropped API 3; neo_f3kdb, KNLMeansCL, MVTools,
-  SangNom, TDeintMod, EEDI2, nnedi3 are API 3 builds.
+- **VapourSynth R80 + PyPI wheels** (see §1). bm3dcpu is excluded via a uv
+  override (still API 3); jetpack's `nvidia` extra pulls Linux-only CUDA
+  wheels, so our own `nvidia` extra lists the Windows plugins explicitly.
+- **Colour tagging**: generated scripts set `_Matrix/_Transfer/_Primaries/
+  _ColorRange` from the probe (HD/SD defaults for untagged sources) so RGB-based
+  filters (DPIR) and resizers never guess.
 - **Track ids**: ffprobe stream indexes and mkvmerge track ids differ (MPEG-PS,
   BD). The probe pairs them by order within each type (`mkv_id`); track
   selection always uses `mkv_id`.

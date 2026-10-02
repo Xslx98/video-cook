@@ -27,6 +27,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     from videocook import bootstrap, fsutil
 
     problems = bootstrap.verify()
+    import vapoursynth as vs
+
+    loaded = {p.namespace for p in vs.core.plugins()}
+    for group, names in bootstrap.GPU_NAMESPACES.items():
+        have = [n for n in names if n in loaded]
+        print(f"GPU {group}: {', '.join(have) or 'not available'}")
+    print(f"VapourSynth {vs.__version__}")
     if not fsutil.long_paths_enabled():
         problems.append("Windows LongPathsEnabled is 0: paths over 260 chars will break external tools")
     for p in problems:

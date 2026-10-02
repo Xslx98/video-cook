@@ -10,12 +10,12 @@ trades against one of these: deband/denoise eat texture, AA softens lines.
 
 | Defect | What it looks like | Where the scan finds it | Typical remedy | Notes |
 |---|---|---|---|---|
-| Banding (色带) | contour steps in gradients — sky, walls, dark fades | `dark_flat`, `bright_gradient` crops; dark ones in `*_boost.png` | `deband` light/medium/strong | Most visible defect; 10-bit output keeps the fix. Strong deband on grainy film smears grain. |
+| Banding (色带) | contour steps in gradients — sky, walls, dark fades | CAMBI column and `cambi-hotspot` picks; `dark_flat`, `bright_gradient` crops; dark ones in `*_boost.png` | `deband` light/medium/strong | Most visible defect; 10-bit output keeps the fix. Strong deband on grainy film smears grain. |
 | Aliasing (锯齿) | jagged/stair-stepped lines, broken thin lines | `high_detail` crops (zoomed 2×) | `aa` nnedi3 (eedi2/eedi3 for harder cases) | Mostly anime/CG. Upscaled ("fake 1080p") sources alias along every line. Live action rarely needs AA. |
 | Ringing / haloing (振铃/晕轮) | light/dark echo hugging strong edges | `high_detail` | none in our presets (dering is advanced) — note it, usually preserve | Often from sharpening or bad upscales. |
 | Noise / grain (噪点) | random fine texture; dynamic | `dark_noisy`, `noise` timeline | film: **preserve** (x265 live_action layer); anime/digital noise: `denoise` light | Decide: is it artistic grain or compression/sensor noise? |
-| Blocking (色块) | square blocks, mostly in dark/moving areas | `dark_flat` boosted crops, `high_motion` | light deband can soften; mostly a source limit | Very common in lossy (re-encoded) sources. |
-| DCT ringing / mosquito noise (烂边/蚊噪) | buzzing specks around edges | `high_detail`, `dark_noisy` | light denoise | Compression artefact of the source. |
+| Blocking (色块) | square blocks, mostly in dark/moving areas | `dark_flat` boosted crops, `high_motion` | `dpir` deblock (frontier AI) + light deband | Very common in lossy sources; DPIR is the strongest tool. |
+| DCT ringing / mosquito noise (烂边/蚊噪) | buzzing specks around edges | `high_detail`, `dark_noisy` | `dpir` deblock, or light nlm | Compression artefact of the source. |
 | Luma overflow/underflow (亮度越界) | crushed blacks / clipped whites outside 16–235 | report "frames with >1% out-of-range luma" | usually preserve (limited range in, limited range out) | Only matters if large areas are clipped. |
 | Combing (拉丝/横纹) | horizontal comb teeth on moving edges | probe interlace verdict, `high_motion` | `field = "ivtc"` (telecine) or `"deint"` | DVD/TV sources; chapter 10. |
 | 缟缟 (orphan fields, wrongly processed interlacing) | combing that survived a bad deinterlace | as above | case by case; often unfixable | Chapter 10 last section. |

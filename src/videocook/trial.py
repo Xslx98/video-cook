@@ -1,14 +1,15 @@
 """Stage 4b — encode check: short clips with the final x265 settings (design §7).
 
-* risk clips: ~10 s around the riskiest sampled frames → visual comparison + SSIM
+* risk clips: ~10 s around the riskiest sampled frames → visual comparison + metrics
 * uniform clips: short segments spread over the title → bitrate → size estimate
-SSIM is reported for reference only.
+Metrics (reference only, never a gate): SSIMULACRA2 (perceptual, 0–100; ≥90 is
+visually lossless territory, 80–90 very good), XPSNR (psychovisual PSNR, dB) and
+CAMBI of encoder input vs output (positive delta = banding added by x265).
 """
 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from pathlib import Path
 
@@ -36,18 +37,37 @@ def _encode_range(vpy: Path, start: int, end: int, x265_args: list[str], out: Pa
         raise RuntimeError(f"test encode failed, see {log}")
 
 
-def _ssim(vpy: Path, start: int, end: int, encoded: Path) -> dict:
-    pipe = subprocess.Popen([str(tool("vspipe")), "-c", "y4m", "-s", str(start), "-e", str(end),
-                             str(vpy), "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    res = subprocess.run([str(tool("ffmpeg")), "-hide_banner", "-nostats", "-i", "-", "-i", str(encoded),
-                          "-lavfi", "[1:v][0:v]ssim", "-f", "null", "-"],
-                         stdin=pipe.stdout, capture_output=True, text=True, errors="replace")
-    pipe.stdout.close()
-    pipe.wait()
-    m = re.search(r"SSIM Y:([\d.]+).*All:([\d.]+) \(([\d.]+|inf)\)", res.stderr)
-    if not m:
-        return {}
-    return {"y": float(m.group(1)), "all": float(m.group(2)), "db": m.group(3)}
+def _metrics(res, start: int, end: int, encoded: Path, colour: dict) -> dict:
+    """SSIMULACRA2 / XPSNR / CAMBI between the encoder input and the encoded clip."""
+    import vapoursynth as vs
+
+    from videocook import images
+
+    core = vs.core
+    ref = res[start:end + 1]
+    enc = core.lsmas.LWLibavSource(str(encoded), cachefile=str(encoded.with_suffix(".lwi")))
+    if enc.num_frames != ref.num_frames:
+        return {"error": f"frame mismatch {enc.num_frames} vs {ref.num_frames}"}
+    enc = core.resize.Point(enc, format=ref.format.id)
+    xp = core.vszip.XPSNR(ref, enc)
+    to_rgbs = lambda c: core.resize.Bicubic(images.to_rgb(c, colour), format=vs.RGBS)  # noqa: E731
+    s2 = core.vszip.SSIMULACRA2(to_rgbs(ref), to_rgbs(enc))
+    gray = lambda c: core.resize.Point(c, format=vs.GRAY10)  # noqa: E731
+    cam_ref = core.akarin.Cambi(gray(ref))
+    cam_enc = core.akarin.Cambi(gray(enc))
+    vals: dict[str, list[float]] = {"ssimu2": [], "xpsnr_y": [], "cambi_in": [], "cambi_out": []}
+    for fx, fs, fa, fb in zip(xp.frames(), s2.frames(), cam_ref.frames(), cam_enc.frames()):
+        vals["xpsnr_y"].append(fx.props["XPSNR_Y"])
+        vals["ssimu2"].append(fs.props["SSIMULACRA2"])
+        vals["cambi_in"].append(fa.props["CAMBI"])
+        vals["cambi_out"].append(fb.props["CAMBI"])
+    import numpy as np
+
+    s2v = np.array(vals["ssimu2"])
+    return {"ssimu2_mean": round(float(s2v.mean()), 2), "ssimu2_p5": round(float(np.percentile(s2v, 5)), 2),
+            "xpsnr_y": round(float(np.mean([v for v in vals["xpsnr_y"] if np.isfinite(v)] or [0])), 2),
+            "cambi_in": round(float(np.mean(vals["cambi_in"])), 2),
+            "cambi_out": round(float(np.mean(vals["cambi_out"])), 2)}
 
 
 def choose_risk_clips(picks: list[dict], count: int, length: int, total: int) -> list[dict]:
@@ -102,7 +122,8 @@ def run(job: Job, unit_id: str | None = None, quick: bool = False) -> dict:
         size = hevc.stat().st_size
         frames = c["end"] - c["start"] + 1
         entry = {**{k: c[k] for k in ("start", "end")}, "bucket": c["pick"]["bucket"],
-                 "kbps": round(size * 8 / (frames / fps) / 1000), "ssim": _ssim(vpy, c["start"], c["end"], hevc)}
+                 "kbps": round(size * 8 / (frames / fps) / 1000),
+                 "metrics": _metrics(res, c["start"], c["end"], hevc, facts["colour"])}
         entry["image"] = str(_compare_image(hevc, c, rgb_src, facts, out / f"risk{i:02d}.png", job))
         report["risk"].append(entry)
     for i, c in enumerate(uniform, 1):
@@ -150,11 +171,15 @@ def _compare_image(hevc: Path, clip: dict, rgb_src, facts: dict, path: Path, job
 
 def report_md(r: dict) -> str:
     lines = [f"# Trial encode — {r['unit']}", "", "x265 " + " ".join(r["x265"]), "",
-             "| clip | frames | bucket | kbps | SSIM Y | SSIM all (dB) | image |", "|---|---|---|---|---|---|---|"]
+             "| clip | frames | bucket | kbps | SSIMULACRA2 mean / p5 | XPSNR-Y dB | CAMBI in → out | image |",
+             "|---|---|---|---|---|---|---|---|"]
     for i, c in enumerate(r["risk"], 1):
-        s = c.get("ssim") or {}
+        m = c.get("metrics") or {}
         lines.append(f"| risk{i:02d} | {c['start']}-{c['end']} | {c['bucket']} | {c['kbps']} | "
-                     f"{s.get('y', '')} | {s.get('all', '')} ({s.get('db', '')}) | `{Path(c['image']).name}` |")
+                     f"{m.get('ssimu2_mean', '')} / {m.get('ssimu2_p5', '')} | {m.get('xpsnr_y', '')} | "
+                     f"{m.get('cambi_in', '')} → {m.get('cambi_out', '')} | `{Path(c['image']).name}` |")
+    lines += ["", "Metrics are references, not gates: SSIMULACRA2 ≥ 90 ≈ visually lossless, "
+              "80–90 very good; a CAMBI increase means x265 added banding (lower CRF / raise aq-strength)."]
     if r.get("estimate"):
         e = r["estimate"]
         lines += ["", f"**Estimated video size: {e['video_gib']} GiB** "

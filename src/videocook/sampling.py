@@ -42,6 +42,7 @@ class Shot:
     motion: float
     oor: float
     luma_range: float = 1.0
+    cambi: float = 0.0
     bucket: str = "normal"
 
     @property
@@ -65,7 +66,8 @@ def summarise_shots(scan: ScanResult) -> list[Shot]:
                         float(d["dark_flat"][sl].mean()), float(d["flat"][sl].mean()),
                         float(d["edge"][sl].mean()), float(d["noise"][sl].mean()),
                         float(np.median(d["motion"][sl])), float(d["oor"][sl].mean()),
-                        float(np.median(d["luma_max"][sl] - d["luma_min"][sl]))))
+                        float(np.median(d["luma_max"][sl] - d["luma_min"][sl])),
+                        float(d["cambi"][sl].mean())))
     return out
 
 
@@ -135,9 +137,9 @@ def allocate(comp: dict, budget: int) -> dict[str, int]:
 
 
 KEY_METRIC = {
-    "dark_flat": ("dark_flat", max),
+    "dark_flat": ("cambi", max),
     "dark_noisy": ("noise", max),
-    "bright_gradient": ("flat", max),
+    "bright_gradient": ("cambi", max),
     "high_detail": ("edge", max),
     "high_motion": ("motion", max),
     "static": ("edge", max),
@@ -169,7 +171,24 @@ def pick_frames(shots_: list[Shot], alloc: dict[str, int], scan: ScanResult) -> 
             picks.append({"frame": frame, "bucket": bucket, "role": role,
                           "time": frame / scan.fps, "shot": [s.start, s.end],
                           "metrics": {m: round(getattr(s, m), 4) for m in
-                                      ("luma", "dark_flat", "flat", "edge", "noise", "motion", "oor")}})
+                                      ("luma", "dark_flat", "flat", "edge", "noise", "motion", "oor", "cambi")}})
+    # Banding hotspots: CAMBI finds banding the bucket heuristics miss; make sure the
+    # worst shots (scan-resolution CAMBI ≥ 2.5) are always looked at.
+    picked = {tuple(p["shot"]) for p in picks}
+    cam = scan.data["cambi"]
+    peaks: list[tuple[float, Shot]] = []
+    for s in shots_:
+        if s.bucket == "blank" or (s.start, s.end) in picked or s.length < 6:
+            continue
+        seg = cam[s.start:s.end]
+        if len(seg) and float(seg.max()) >= 3.0:
+            peaks.append((float(seg.max()), s))
+    for _, s in sorted(peaks, key=lambda t: -t[0])[:2]:
+        frame = _best_frame(s, "cambi", scan)
+        picks.append({"frame": frame, "bucket": s.bucket, "role": "cambi-hotspot",
+                      "time": frame / scan.fps, "shot": [s.start, s.end],
+                      "metrics": {m: round(getattr(s, m), 4) for m in
+                                  ("luma", "dark_flat", "flat", "edge", "noise", "motion", "oor", "cambi")}})
     picks.sort(key=lambda p: p["frame"])
     return picks
 
@@ -208,6 +227,9 @@ def assess(scan: ScanResult, budget: int) -> dict:
             "median_motion": float(np.median(d["motion"])),
             "oor_frames_share": float((d["oor"] > 0.01).mean()),
             "near_duplicate_frames_share": float((d["motion"][1:] < 1e-4).mean()),
+            "cambi_median": float(np.median(d["cambi"])),
+            "cambi_p95": float(np.percentile(d["cambi"], 95)),
+            "cambi_max": float(d["cambi"].max()),
         },
         "shot_list": [asdict(s) for s in shots_],
     }

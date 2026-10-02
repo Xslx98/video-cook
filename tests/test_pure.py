@@ -89,6 +89,7 @@ def test_assess_synthetic_scan():
         "noise": rng.random(n).astype(np.float32),
         "oor": np.zeros(n, np.float32),
         "motion": rng.random(n).astype(np.float32) * 0.05,
+        "cambi": np.where(np.arange(n) < 1200, 3.0, 0.5).astype(np.float32),
         "scene": (np.arange(n) % 120 == 0).astype(np.float32),
     }
     res = sampling.assess(ScanResult(24.0, n, 1920, 1080, data), budget=8)
@@ -113,3 +114,11 @@ def test_naming_helpers():
     assert naming.resolution_label(800, 1920) == "1080p"  # cropped scope 1080p
     assert naming.resolution_label(720, 1280) == "720p"
     assert naming.safe('House M.D.: "Pilot"') == "House M.D.   Pilot"
+
+
+def test_detect_scenes_spikes():
+    from videocook.scan import detect_scenes
+
+    motion = np.full(100, 0.01, np.float32)
+    motion[[30, 70]] = 0.3
+    assert list(np.nonzero(detect_scenes(motion))[0]) == [30, 70]

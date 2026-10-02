@@ -74,8 +74,11 @@ def choose_crop(luma: np.ndarray, bucket: str, cw: int, ch: int) -> tuple[int, i
     return best_xy
 
 
-def boost_dark(arr: np.ndarray, ceiling: int = 80) -> np.ndarray:
-    """Stretch 0..ceiling (8-bit RGB) to the full range so dark banding becomes visible."""
+def boost_dark(arr: np.ndarray, ceiling: int | None = None) -> np.ndarray:
+    """Stretch 0..ceiling (8-bit RGB) to the full range so dark banding becomes visible.
+    The ceiling adapts to the crop (its 99.5th percentile, at least 40)."""
+    if ceiling is None:
+        ceiling = int(max(40, min(255, np.percentile(arr, 99.5))))
     return np.clip(arr.astype(np.float32) * (255.0 / ceiling), 0, 255).astype(np.uint8)
 
 

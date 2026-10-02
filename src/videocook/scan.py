@@ -11,7 +11,11 @@ Per-frame metrics (all luma, 16-bit limited-range code values):
     noise      mean |Y - blur(Y)| over flat pixels, in 8-bit code values
     oor        share of pixels outside limited range (luma overflow/underflow)
     motion     mean absolute difference to the previous frame (0..1)
-    scene      1 where SCDetect marks a scene change before this frame
+    cambi      Netflix CAMBI banding score (akarin.Cambi on 10-bit luma at scan
+               resolution; 0 = none, >5 visible at native resolution — at ~540p
+               treat it as a relative indicator)
+    scene      1 where a scene change starts at this frame (motion spike;
+               VapourSynth R80 dropped misc.SCDetect)
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ DARK = 18112    # 25% of the limited range above black (~8-bit code 70)
 BLACK, WHITE = 4096, 60160
 
 METRICS = ("luma", "luma_min", "luma_max", "flat", "dark_flat", "edge", "noise", "oor",
-           "motion", "scene")
+           "motion", "cambi", "scene")
 
 
 @dataclass
@@ -52,7 +56,8 @@ class ScanResult:
     @classmethod
     def load(cls, path: Path) -> "ScanResult":
         z = np.load(path)
-        data = {k: z[k] for k in METRICS}
+        n = len(z["luma"])
+        data = {k: z[k] if k in z else np.zeros(n, np.float32) for k in METRICS}
         return cls(float(z["fps"]), len(data["luma"]), int(z["width"]), int(z["height"]), data)
 
 
@@ -74,9 +79,20 @@ def build_stats_clip(src: vs.VideoNode, scan_width: int = 960) -> vs.VideoNode:
     oor = core.akarin.Expr(y, f"x {BLACK} < x {WHITE} > or 65535 0 ?")
     for clip, prop in ((flat, "F"), (dark_flat, "DF"), (edge, "E"), (noise, "N"), (oor, "O")):
         out = core.std.CopyFrameProps(out, stats(clip, prop), props=[f"{prop}Average"])
-    sc = core.misc.SCDetect(y, threshold=0.14)
-    out = core.std.CopyFrameProps(out, sc, props=["_SceneChangePrev"])
+    y10 = core.resize.Bilinear(src, scan_width, h, format=vs.GRAY10)
+    out = core.std.CopyFrameProps(out, core.akarin.Cambi(y10), props=["CAMBI"])
     return out
+
+
+def detect_scenes(motion: np.ndarray, floor: float = 0.06, ratio: float = 3.0) -> np.ndarray:
+    """Scene cut where the frame difference spikes above its recent baseline."""
+    n = len(motion)
+    scene = np.zeros(n, np.float32)
+    for i in range(1, n):
+        base = float(np.median(motion[max(0, i - 8):i])) if i > 1 else 0.0
+        if motion[i] > floor and motion[i] > ratio * base + 0.02:
+            scene[i] = 1.0
+    return scene
 
 
 def run_scan(spec: dict, cache_dir: Path, scan_width: int = 960, hw: bool = True,
@@ -99,10 +115,11 @@ def run_scan(spec: dict, cache_dir: Path, scan_width: int = 960, hw: bool = True
         arr["oor"][i] = p["OAverage"]
         fa = p["FAverage"]
         arr["noise"][i] = (p["NAverage"] * 65535 / 256) / fa if fa > 0.01 else 0.0
-        arr["scene"][i] = p.get("_SceneChangePrev", 0)
+        arr["cambi"][i] = p.get("CAMBI", 0.0)
         if progress and i % 2000 == 0 and i:
             fps = i / (time.perf_counter() - t0)
             print(f"  scan {i}/{n} frames, {fps:.0f} fps, eta {(n - i) / fps / 60:.1f} min", flush=True)
+    arr["scene"] = detect_scenes(arr["motion"])
     fps = float(src.fps) if src.fps.denominator else 24000 / 1001
     return ScanResult(fps, n, src.width, src.height, arr)
 

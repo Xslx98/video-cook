@@ -19,14 +19,17 @@ cd video-cook
 powershell -ExecutionPolicy Bypass -File bootstrap.ps1
 ```
 
-The bootstrap downloads the pinned portable toolchain (`tools.lock.json`) into
-`tools/`, installs VapourSynth R79 and its plugins into the uv `.venv`, checks
-everything loads and benchmarks x265 to pick the default parallelism. Nothing
+The bootstrap installs VapourSynth R80 with its plugin wheels and vs-jetpack
+into the uv `.venv` (plus CUDA/TensorRT plugins when an NVIDIA GPU is found),
+downloads the pinned portable toolchain (`tools.lock.json`) into `tools/` and
+the DPIR models, checks everything loads and benchmarks x265 to pick the
+default parallelism. Nothing
 is installed system-wide. Edit `config.local.toml` to set the local workspace.
 
 ## Toolchain
 
-VapourSynth R79 · x265 (10-bit) · ffmpeg · MKVToolNix · MediaInfo · assfonts ·
+VapourSynth R80 + vs-jetpack (API 4 plugin wheels; CUDA/TensorRT, OpenCL,
+Vulkan, OpenVINO backends) · x265 (10-bit) · ffmpeg · MKVToolNix · MediaInfo · assfonts ·
 dovi_tool · hdr10plus_tool. See [docs/design.md](docs/design.md) for the
 reasoning behind every choice.
 
@@ -35,6 +38,13 @@ reasoning behind every choice.
 Open the repo in Claude Code and ask to encode something; the `video-cook`
 skill drives the workflow. The CLI can also be used directly — run
 `uv run vcook --help`.
+
+## Philosophy
+
+The pipeline inherits the VCB-S guides' way of thinking — assess before
+touching anything, fix defects in a deliberate order, keep detail — while using
+current tools and frontier techniques (AI restoration, perceptual metrics such
+as CAMBI and SSIMULACRA2) wherever they give better results.
 
 ## Credits
 

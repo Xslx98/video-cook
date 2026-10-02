@@ -23,12 +23,13 @@ from videocook.vsource import open_source
 core = vs.core
 
 SOURCE = {source}
+COLOUR = {colour}      # from probe.json; untagged sources get HD/SD defaults
 CACHE = r"{cache}"
 TRIM = {trim}          # [[first, last_exclusive], ...] for --trim test runs
 FILTERS = {filters}
 ZONES = {zones}        # [{{"range": [a, b], "filters": {{...}}}}] overrides per frame range
 
-src = open_source(SOURCE, CACHE)
+src = F.tag_colour(open_source(SOURCE, CACHE), COLOUR)
 if TRIM:
     src = core.std.Splice([src[a:b] for a, b in TRIM])
 
@@ -57,6 +58,11 @@ def unit_config(job: Job, unit: dict) -> tuple[dict, list]:
     return filters, unit.get("zones", [])
 
 
+def _colour(job: Job) -> dict:
+    c = job.stream_facts()["colour"]
+    return {k: c.get(k) for k in ("matrix", "transfer", "primaries", "range")}
+
+
 def script_path(job: Job, unit_id: str) -> Path:
     return job.sub("scripts") / f"{unit_id}.vpy"
 
@@ -71,7 +77,7 @@ def generate(job: Job) -> list[Path]:
         filters, zones = unit_config(job, unit)
         path.write_text(TEMPLATE.format(
             job=job.data["job"]["name"], unit=unit["id"],
-            source=repr(unit["source"]),
+            source=repr(unit["source"]), colour=repr(_colour(job)),
             cache=str(job.cache), trim=repr(job.data["run"].get("trim") or []),
             filters=repr(filters), zones=repr(zones)), encoding="utf-8")
         paths.append(path)
