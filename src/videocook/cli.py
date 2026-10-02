@@ -119,6 +119,17 @@ def _cmd_trial(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_fastcheck(args: argparse.Namespace) -> int:
+    from videocook import fasttrack
+    from videocook.job import Job
+
+    r = fasttrack.check(Job.resolve(args.job))
+    print("fast track OK" if r["fast_track"] else "leave fast track:")
+    for m in r["mismatches"]:
+        print(f"  - {m}")
+    return 0 if r["fast_track"] else 3
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vcook", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -165,9 +176,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quick", action="store_true", help="one risk clip, no size estimate")
     p.set_defaults(func=_cmd_trial)
 
-    from videocook import runner
+    p = sub.add_parser("fastcheck", help="fast track: compare a derived job with its reference")
+    p.add_argument("job")
+    p.set_defaults(func=_cmd_fastcheck)
+
+    from videocook import runner, units
 
     runner.add_commands(sub)
+    units.add_commands(sub)
     return parser
 
 

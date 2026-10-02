@@ -82,7 +82,21 @@ def guess_language(tags: list[str]) -> tuple[str, str]:
 
 
 def new_job(source: Path, name: str | None = None, trim: list[list[int]] | None = None) -> Job:
+    from videocook import units
+
+    original = source
+    if source.is_file() and source.suffix.lower() == ".iso":
+        source = units.mount_iso(source)
+    dvd_note = None
+    if probe.detect_kind(source) == "dvd":
+        from videocook.config import load_settings
+
+        staging = load_settings().jobs_dir / (name or slugify(original.name)) / "work"
+        source = units.dvd_main_title(source, staging)
+        dvd_note = str(original)
     result = probe.probe(source)
+    if dvd_note:
+        result["dvd_source"] = dvd_note
     kind = result["kind"]
     initial: dict = {"job": {"title": "", "type": "film"}, "run": {"trim": trim or []}}
     if kind == "bdmv":
@@ -120,7 +134,7 @@ def new_job(source: Path, name: str | None = None, trim: list[list[int]] | None 
     initial["audio"] = {"tracks": default_audio_plan(ms["audio"])}
     initial["subtitles"] = {"tracks": default_subtitle_plan(ms["subtitles"])}
 
-    job = Job.create(name or slugify(source.stem if source.is_file() else source.name), initial)
+    job = Job.create(name or slugify(original.stem if original.is_file() else original.name), initial)
     probe.save(result, job.dir)
     if result.get("sidecars"):
         audio, subs, fonts = sidecar_plan(result["sidecars"], job)

@@ -93,7 +93,7 @@ class Job:
     @classmethod
     def create(cls, name: str, initial: dict) -> "Job":
         d = load_settings().jobs_dir / name
-        if (d / "job.toml").exists():
+        if (d / "job.toml").exists():  # (a DVD intake may have created work/ already)
             raise FileExistsError(f"job {name} already exists at {d}")
         d.mkdir(parents=True, exist_ok=True)
         data = deep_merge(DEFAULTS, initial)
