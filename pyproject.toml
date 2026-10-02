@@ -1,0 +1,26 @@
+[project]
+name = "videocook"
+version = "0.1.0"
+description = "Assessment-first video encoding pipeline built on the VCB-S guides"
+readme = "README.md"
+authors = [
+    { name = "Xslx98", email = "xszh8823@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "vapoursynth==79",
+    "vsrepo>=2.0.0",
+]
+
+[project.scripts]
+vcook = "videocook.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.15,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]

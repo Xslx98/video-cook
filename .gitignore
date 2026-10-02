@@ -1,0 +1,38 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# Portable toolchain (downloaded by bootstrap)
+tools/
+
+# Machine-local configuration
+config.local.toml
+
+# Media and job artefacts must never be committed
+*.mkv
+*.mka
+*.mp4
+*.m2ts
+*.hevc
+*.265
+*.flac
+*.opus
+*.lwi
+*.ffindex
+*.bsindex
+jobs/
+scratch/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

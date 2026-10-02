@@ -1,0 +1,10 @@
+# Copy to config.local.toml (git-ignored) and adjust per machine.
+
+[paths]
+# Local SSD workspace holding one directory per job.
+workspace = "D:/VideoCook"
+
+[encode]
+# Parallel x265 encodes; "auto" uses the bootstrap benchmark result.
+parallel_1080p = "auto"
+parallel_2160p = "auto"

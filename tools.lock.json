@@ -1,0 +1,74 @@
+{
+  "comment": "Portable toolchain pinned by URL and SHA256. 'bin' entries are paths inside the extracted directory tools/<name>/.",
+  "tools": {
+    "7zr": {
+      "version": "26.03",
+      "url": "https://github.com/ip7z/7zip/releases/download/26.03/7zr.exe",
+      "sha256": "ad4c82fadcbdf93c03b4fc440f300509c7d60c5c2f4d183e35d9d70d6957037d",
+      "archive": "none",
+      "bin": {"7zr": "7zr.exe"}
+    },
+    "ffmpeg": {
+      "version": "9.0.2",
+      "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build.7z",
+      "sha256": "f0e46253c70dfe902bac915dfb4224f0cf1b7c6eeab9da2ccc9a5581f9a71b13",
+      "archive": "7z",
+      "bin": {
+        "ffmpeg": "ffmpeg-9.0.2-full_build/bin/ffmpeg.exe",
+        "ffprobe": "ffmpeg-9.0.2-full_build/bin/ffprobe.exe"
+      }
+    },
+    "x265": {
+      "version": "4.3+22+73 (Mod by Patman, x86-64-v3, 8/10/12-bit)",
+      "url": "https://github.com/Patman86/x265-Mod-by-Patman/releases/download/4.3%2B22%2B73/x265-4.3%2B22%2B73-1e85ca6eb-.Mod-by-Patman.-x64-x86-64-v3-gcc16.2.0.7z",
+      "sha256": "472debc962ba947580a118bd80f9fc8a4e47226e2adccdd6441ba7daaea0e921",
+      "archive": "7z",
+      "bin": {"x265": "x265.exe"}
+    },
+    "mkvtoolnix": {
+      "version": "102.0",
+      "url": "https://mkvtoolnix.download/windows/releases/102.0/mkvtoolnix-64-bit-102.0.7z",
+      "sha256": "cd63c42caee3d9e5b631e029657b3bd322beba77e150cecbfc9ae4923638b049",
+      "archive": "7z",
+      "bin": {
+        "mkvmerge": "mkvtoolnix/mkvmerge.exe",
+        "mkvextract": "mkvtoolnix/mkvextract.exe",
+        "mkvpropedit": "mkvtoolnix/mkvpropedit.exe"
+      }
+    },
+    "mediainfo": {
+      "version": "26.05",
+      "url": "https://mediaarea.net/download/binary/mediainfo/26.05/MediaInfo_CLI_26.05_Windows_x64.zip",
+      "sha256": "f7f80620ce6d14f4995f0de6f98e3ef18ad29496db01899571152ee3311229f9",
+      "archive": "zip",
+      "bin": {"mediainfo": "MediaInfo.exe"}
+    },
+    "assfonts": {
+      "version": "0.7.3",
+      "url": "https://github.com/wyzdwdz/assfonts/releases/download/v0.7.3/assfonts-v0.7.3-x86_64-Windows.zip",
+      "sha256": "4dd11a3aa86cf03b8428ffd644b54c25d9a0ab7ab212c1460e6a34eaf22d7fa4",
+      "archive": "zip",
+      "bin": {"assfonts": "assfonts.exe"}
+    },
+    "dovi_tool": {
+      "version": "2.3.4",
+      "url": "https://github.com/quietvoid/dovi_tool/releases/download/2.3.4/dovi_tool-2.3.4-x86_64-pc-windows-msvc.zip",
+      "sha256": "0d9733d311dfe49f9dca0c350f7e6d978182673d333c6f07f7365daf9e6c81eb",
+      "archive": "zip",
+      "bin": {"dovi_tool": "dovi_tool.exe"}
+    },
+    "hdr10plus_tool": {
+      "version": "1.7.2",
+      "url": "https://github.com/quietvoid/hdr10plus_tool/releases/download/1.7.2/hdr10plus_tool-1.7.2-x86_64-pc-windows-msvc.zip",
+      "sha256": "82b2d560073941b14c6511a431f429e33e134e5caefb60d7e8f6f6e6da8e16ba",
+      "archive": "zip",
+      "bin": {"hdr10plus_tool": "hdr10plus_tool.exe"}
+    }
+  },
+  "vapoursynth_plugins": [
+    "lsmas", "ffms2", "bs", "fmtc", "mvsfunc", "vsutil", "havsfunc",
+    "neo_f3kdb", "znedi3", "nnedi3", "nnedi3_weights", "eedi2", "eedi3m", "sangnom",
+    "dfttest", "neo_dfttest", "knlm", "bm3dcpu", "zsmooth", "rgvs",
+    "tcanny", "akarin", "vivtc", "tdm", "mv", "descale", "placebo", "vszip", "imwri", "cas"
+  ]
+}
