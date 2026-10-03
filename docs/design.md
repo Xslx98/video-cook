@@ -245,6 +245,29 @@ explicit request.
   ending the encode early. Encodes are retried up to 3 times (broken output
   discarded); QA's frame count is the final guard. See "vspipe → x265 pipe
   investigation" below for what is known.
+- **Encode forensics** (2026-10-03): run and trial encodes share
+  `videocook.pipe.encode`. Every attempt compares x265's `encoded N frames`
+  with the expected count, so a short encode with both exit codes 0 is caught
+  and retried immediately rather than at QA. Each attempt has its own log
+  (`<name>.log`, retries `<name>_tryN.log`) with command lines, exit codes and
+  exit times; vspipe's stderr goes to a separate `<name>.vspipe.log` (it used to
+  share the x265 log handle). Each failed attempt appends a record to
+  `<job>/logs/encode_failures.jsonl`: failure kind (`vspipe_error`,
+  `x265_error`, `short_encode`), expected/encoded frames, which process exited
+  first and when, stderr tails, output size and a system memory snapshot
+  (`GlobalMemoryStatusEx`, to test the resource-error theory). `vcook status`
+  and the trial report show retries. Decision: keep the pipe until a real
+  failure on the desktop has been recorded and analysed with this data.
+- **Benchmark**: the bootstrap benchmark script used `core.grain.Add`; the
+  noise plugin wheel registers as `noise`, so vspipe failed instantly and the
+  "fps" measured process start-up (the first desktop run reported 2197 fps for
+  two 1080p `slower` encodes). Fixed to `noise.Add`; a failing benchmark encode
+  now raises, and `noise` is a required namespace.
+- **CUDA plugin wheels** (2026-10-03): the Windows wheels of
+  `vapoursynth-bm3dcuda` 2.17 and `vapoursynth-nlm-cuda` 5 (latest on PyPI)
+  are still API 3 builds, so R80 does not load them. Filters fall back to
+  `bm3dvk` (Vulkan) and `vszipcl` (OpenCL) — both still on the GPU. `vcook
+  doctor` lists GPU plugins that did not load. Re-check on new wheel releases.
 
 ## vspipe → x265 pipe investigation (open, 2026-10-02)
 

@@ -32,7 +32,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     loaded = {p.namespace for p in vs.core.plugins()}
     for group, names in bootstrap.GPU_NAMESPACES.items():
         have = [n for n in names if n in loaded]
-        print(f"GPU {group}: {', '.join(have) or 'not available'}")
+        lacking = [n for n in names if n not in loaded]
+        print(f"GPU {group}: {', '.join(have) or 'not available'}"
+              + (f" (not loaded: {', '.join(lacking)}; filters fall back to other backends)"
+                 if have and lacking else ""))
     print(f"VapourSynth {vs.__version__}")
     if not fsutil.long_paths_enabled():
         problems.append("Windows LongPathsEnabled is 0: paths over 260 chars will break external tools")

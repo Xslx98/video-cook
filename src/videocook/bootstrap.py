@@ -92,7 +92,7 @@ def install_models() -> None:
 # the set the pipeline relies on. GPU-only namespaces are checked separately.
 REQUIRED_NAMESPACES = [
     "lsmas", "bs", "ffms2", "fmtc", "akarin", "vszip", "zsmooth", "znedi3", "nlm_ispc",
-    "dfttest2_cpu", "bm3dvk", "mvu", "vivtc", "bwdif", "descale", "resize2", "placebo", "ov",
+    "dfttest2_cpu", "bm3dvk", "mvu", "noise", "vivtc", "bwdif", "descale", "resize2", "placebo", "ov",
 ]
 GPU_NAMESPACES = {"nvidia": ["nlm_cuda", "bm3dcuda", "trt", "vszipcu"], "opencl": ["vszipcl"]}
 
@@ -124,7 +124,7 @@ import vapoursynth as vs
 core = vs.core
 clip = core.std.BlankClip(width={w}, height={h}, format=vs.YUV420P16, length={n},
                           fpsnum=24000, fpsden=1001, color=[20000, 32768, 32768])
-clip = core.grain.Add(clip, var=40, uvar=10, constant=False)
+clip = core.noise.Add(clip, var=40, uvar=10, constant=False)
 clip = core.resize.Point(clip, format=vs.YUV420P10)
 clip.set_output()
 """
@@ -149,6 +149,10 @@ def _bench_once(vpy: Path, parallel: int, frames: int) -> float:
     for pipe, enc in procs:
         enc.wait()
         pipe.wait()
+        if enc.returncode != 0 or pipe.returncode != 0:
+            # A failing script makes x265 encode nothing and the fps meaningless.
+            raise RuntimeError(f"benchmark encode failed (vspipe {pipe.returncode}, "
+                               f"x265 {enc.returncode}) for {vpy}")
     return parallel * frames / (time.perf_counter() - start)
 
 

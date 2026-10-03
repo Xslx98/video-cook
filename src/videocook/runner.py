@@ -13,20 +13,18 @@ import ctypes
 import datetime as dt
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import threading
-import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from videocook import encoder, naming, qa, script, tracks
+from videocook import encoder, naming, pipe, qa, script, tracks
 from videocook.config import load_settings
 from videocook.job import Job
-from videocook.toolchain import run, tool
+from videocook.toolchain import run
 
 BELOW_NORMAL = 0x00004000
 DETACHED = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
@@ -184,21 +182,10 @@ class UnitRunner:
                                "subtitles.font_dirs (or, with the user's consent, set "
                                "subtitles.allow_missing_fonts = true) and re-run")
 
-    def step_video(self, attempts: int = 3) -> None:
-        """Encode, retrying when the vspipe→x265 pipe breaks (seen intermittently on
-        Windows with R80: vspipe fwrite errno 22). A broken attempt is discarded."""
+    def step_video(self) -> None:
+        """Encode; broken vspipe→x265 attempts are retried and logged (see pipe.py)."""
         if not self.encode:
             return
-        for attempt in range(1, attempts + 1):
-            try:
-                return self._encode_video(attempt)
-            except RuntimeError:
-                (self.work / "video.hevc").unlink(missing_ok=True)
-                if attempt == attempts:
-                    raise
-                self.state.set(self.uid, progress=f"encode attempt {attempt} failed, retrying")
-
-    def _encode_video(self, attempt: int) -> None:
         facts = self.job.stream_facts()
         qp = None
         if self.job.data["chapters"].get("keyframes") and not self.trim \
@@ -207,41 +194,20 @@ class UnitRunner:
                                self.work / "chapters.qp")
         args = encoder.build(self.job.data["video"], facts["colour"], facts["hdr"], self.info["height"],
                              qpfile=str(qp) if qp else None)
-        out = self.work / "video.hevc"
-        log = self.logs / f"{self.uid}_x265{'' if attempt == 1 else f'_try{attempt}'}.log"
-        with log.open("w", encoding="utf-8") as lf:
-            lf.write("x265 " + " ".join(args) + "\n")
-            lf.flush()
-            pipe = subprocess.Popen([str(tool("vspipe")), "-c", "y4m", str(self.vpy), "-"],
-                                    stdout=subprocess.PIPE, stderr=lf, creationflags=BELOW_NORMAL)
-            enc = subprocess.Popen([str(tool("x265")), "--y4m", "--input", "-", *args, "--output", str(out)],
-                                   stdin=pipe.stdout, stderr=subprocess.PIPE, stdout=lf,
-                                   creationflags=BELOW_NORMAL)
-            pipe.stdout.close()
-            self.state.set(self.uid, pids=[pipe.pid, enc.pid])
-            buf = b""
-            last = 0.0
-            while True:
-                ch = enc.stderr.read(256)
-                if not ch:
-                    break
-                buf += ch
-                parts = re.split(rb"[\r\n]", buf)
-                buf = parts[-1]
-                for p in parts[:-1]:
-                    line = p.decode("utf-8", "replace").strip()
-                    if not line:
-                        continue
-                    if line.startswith("["):  # progress line
-                        if time.time() - last > 5:
-                            self.state.set(self.uid, progress=line)
-                            last = time.time()
-                    else:
-                        lf.write(line + "\n")
-            enc.wait()
-            pipe.wait()
-        if enc.returncode != 0 or pipe.returncode != 0:
-            raise RuntimeError(f"encode failed (x265 {enc.returncode}, vspipe {pipe.returncode}); see {log}")
+        retries: list[str] = []
+        self.state.set(self.uid, encode_retries=retries)  # clear a previous run's record
+
+        def on_retry(rec: dict) -> None:
+            retries.append(f"try {rec['attempt']}: {rec['failure']} ({rec['encoded']}/{rec['expected']})")
+            self.state.set(self.uid, progress=f"encode attempt {rec['attempt']} failed ({rec['failure']}), retrying",
+                           encode_retries=retries)
+
+        res = pipe.encode(self.vpy, args, self.work / "video.hevc", self.logs / f"{self.uid}_x265.log",
+                          self.info["frames"], priority=BELOW_NORMAL,
+                          on_progress=lambda line: self.state.set(self.uid, progress=line),
+                          on_pids=lambda pids: self.state.set(self.uid, pids=pids), on_retry=on_retry)
+        if res["attempts"] > 1:
+            self.state.set(self.uid, progress=f"encoded after {res['attempts']} attempts")
 
     def _av_mka(self) -> Path:
         """All final audio + subtitle tracks with metadata, trimmed if --trim is set."""
@@ -454,8 +420,13 @@ def status_text(job: Job) -> str:
     for uid, u in st["units"].items():
         steps = " ".join(f"{k}:{'✓' if v == 'done' else v}" for k, v in u["steps"].items())
         lines.append(f"  {uid}: {u.get('status', 'pending')} | {steps} | {u.get('progress', '')}")
+        if u.get("encode_retries"):
+            lines.append("    encode retries: " + "; ".join(u["encode_retries"]))
         if u.get("error"):
             lines.append("    error: " + u["error"].splitlines()[0])
+    failures = job.dir / "logs" / pipe.FAILURE_LOG
+    if failures.exists():
+        lines.append(f"  encode failure records: {failures}")
     return "\n".join(lines)
 
 

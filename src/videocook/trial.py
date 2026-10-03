@@ -10,41 +10,22 @@ CAMBI of encoder input vs output (positive delta = banding added by x265).
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 import numpy as np
 
-from videocook import encoder, images
+from videocook import encoder, images, pipe
 from videocook.compare import picks_for
 from videocook.job import Job
 from videocook.sampling import BUCKETS
 from videocook.script import load_outputs, script_path
-from videocook.toolchain import tool
 
 
 def _encode_range(vpy: Path, start: int, end: int, x265_args: list[str], out: Path, log: Path,
-                  attempts: int = 3) -> None:
-    """vspipe [start, end] (inclusive) | x265 → out (.hevc), retried on pipe failures."""
-    for attempt in range(1, attempts + 1):
-        try:
-            return _encode_once(vpy, start, end, x265_args, out, log)
-        except RuntimeError:
-            if attempt == attempts:
-                raise
-
-
-def _encode_once(vpy: Path, start: int, end: int, x265_args: list[str], out: Path, log: Path) -> None:
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("w", encoding="utf-8") as lf:
-        pipe = subprocess.Popen([str(tool("vspipe")), "-c", "y4m", "-s", str(start), "-e", str(end),
-                                 str(vpy), "-"], stdout=subprocess.PIPE, stderr=lf)
-        enc = subprocess.run([str(tool("x265")), "--y4m", "--input", "-", *x265_args,
-                              "--output", str(out)], stdin=pipe.stdout, stderr=lf, stdout=lf)
-        pipe.stdout.close()
-        pipe.wait()
-    if enc.returncode != 0 or pipe.returncode != 0:
-        raise RuntimeError(f"test encode failed, see {log}")
+                  failure_log: Path) -> int:
+    """Frames [start, end] (inclusive) → out (.hevc); returns the attempts needed (see pipe.py)."""
+    return pipe.encode(vpy, x265_args, out, log, end - start + 1, frame_range=(start, end),
+                       failure_log=failure_log)["attempts"]
 
 
 def _metrics(res, start: int, end: int, encoded: Path, colour: dict) -> dict:
@@ -126,21 +107,23 @@ def run(job: Job, unit_id: str | None = None, quick: bool = False) -> dict:
 
     report: dict = {"unit": unit_id, "x265": args, "risk": [], "uniform": []}
     rgb_src = images.to_rgb(src, facts["colour"])
+    failures = job.sub("logs") / pipe.FAILURE_LOG
     for i, c in enumerate(risk, 1):
         hevc = out / f"risk{i:02d}_{c['start']}-{c['end']}.hevc"
-        _encode_range(vpy, c["start"], c["end"], args, hevc, out / f"risk{i:02d}.log")
+        tries = _encode_range(vpy, c["start"], c["end"], args, hevc, out / f"risk{i:02d}.log", failures)
         size = hevc.stat().st_size
         frames = c["end"] - c["start"] + 1
-        entry = {**{k: c[k] for k in ("start", "end")}, "bucket": c["pick"]["bucket"],
+        entry = {**{k: c[k] for k in ("start", "end")}, "bucket": c["pick"]["bucket"], "attempts": tries,
                  "kbps": round(size * 8 / (frames / fps) / 1000),
                  "metrics": _metrics(res, c["start"], c["end"], hevc, facts["colour"])}
         entry["image"] = str(_compare_image(hevc, c, rgb_src, facts, out / f"risk{i:02d}.png", job))
         report["risk"].append(entry)
     for i, c in enumerate(uniform, 1):
         hevc = out / f"uniform{i:02d}.hevc"
-        _encode_range(vpy, c["start"], c["end"], args, hevc, out / f"uniform{i:02d}.log")
+        tries = _encode_range(vpy, c["start"], c["end"], args, hevc, out / f"uniform{i:02d}.log", failures)
         frames = c["end"] - c["start"] + 1
-        report["uniform"].append({**c, "kbps": round(hevc.stat().st_size * 8 / (frames / fps) / 1000)})
+        report["uniform"].append({**c, "attempts": tries,
+                                  "kbps": round(hevc.stat().st_size * 8 / (frames / fps) / 1000)})
     duration = res.num_frames / fps
     if report["uniform"]:
         kbps = float(np.mean([u["kbps"] for u in report["uniform"]]))
@@ -194,4 +177,9 @@ def report_md(r: dict) -> str:
         e = r["estimate"]
         lines += ["", f"**Estimated video size: {e['video_gib']} GiB** "
                       f"({e['video_kbps']} kbps over {e['duration_min']} min; {e['note']})"]
+    retried = [c for c in r["risk"] + r["uniform"] if c.get("attempts", 1) > 1]
+    if retried:
+        lines += ["", "Encode retries (vspipe → x265 pipe failures): "
+                      + ", ".join(f"{c['start']}-{c['end']} ×{c['attempts']}" for c in retried)
+                      + " — details in logs/encode_failures.jsonl"]
     return "\n".join(lines) + "\n"
